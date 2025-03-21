@@ -31,7 +31,8 @@ import {DataApiClient, FoodStatBonus, GearAcquisitionSource as AcqSrc} from "@xi
 import {BaseParamMap, DataManager} from "./datamanager";
 import {IlvlSyncInfo} from "./datamanager_xivapi";
 import {applyStatCaps} from "./gear";
-import {toTranslatable, TranslatableString} from "./i18n/translation";
+import {toTranslatable, TranslatableString} from "@xivgear/i18n/translation";
+import {RawStatsPart} from "@xivgear/util/types";
 
 type ApiClientRawType<X extends keyof DataApiClient<never>, Y extends keyof DataApiClient<never>[X]> = DataApiClient<never>[X][Y]
 
@@ -205,8 +206,10 @@ export class NewApiDataManager implements DataManager {
         }
     }
 
-    itemById(id: number): (GearItem | undefined) {
-        return this._allItems.find(item => item.id === id);
+    itemById(id: number, forceNq: boolean = false): (GearItem | undefined) {
+        return this._allItems.find(item => {
+            return item.id === id && item.isNqVersion === forceNq;
+        });
     }
 
     materiaById(id: number): (Materia | undefined) {
@@ -245,7 +248,7 @@ export class NewApiDataManager implements DataManager {
             }, {});
             return data;
         });
-        const extraPromises = [];
+        const extraPromises: Promise<unknown>[] = [];
         console.log("Loading items");
 
 
@@ -272,7 +275,14 @@ export class NewApiDataManager implements DataManager {
                             throw e;
                         }
                     })
-                    .map(i => new DataApiGearInfo(i));
+                    .flatMap(i => {
+                        if (i.canBeHq) {
+                            return [new DataApiGearInfo(i), new DataApiGearInfo(i, true)];
+                        }
+                        else {
+                            return [new DataApiGearInfo(i)];
+                        }
+                    });
                 this._maxIlvlForEquipLevel = new Map();
                 this._maxIlvlForEquipLevelWeapon = new Map();
                 this._allItems.forEach(item => {
@@ -463,11 +473,19 @@ export class DataApiGearInfo implements GearItem {
     isSyncedDown: boolean;
     relicStatModel: RelicStatModel;
     syncedDownTo: number | null;
+    isNqVersion: boolean;
 
-    constructor(data: ItemType) {
+    constructor(data: ItemType, forceNq: boolean = false) {
+        this.isNqVersion = forceNq;
         this.id = data.rowId;
-        this.name = data.name;
-        this.nameTranslation = toTranslatable(data.name, data.nameTranslations);
+        if (forceNq) {
+            this.name = '(NQ) ' + data.name;
+            this.nameTranslation = toTranslatable(data.name, data.nameTranslations, i => `(NQ) ${i}`);
+        }
+        else {
+            this.name = data.name;
+            this.nameTranslation = toTranslatable(data.name, data.nameTranslations);
+        }
         this.equipLvl = data.equipLevel;
         this.ilvl = data.ilvl;
         this.iconUrl = new URL(data.icon.pngIconUrl);
@@ -530,17 +548,18 @@ export class DataApiGearInfo implements GearItem {
         this.displayGearSlot = this.displayGearSlotName ? DisplayGearSlotInfo[this.displayGearSlotName] : undefined;
         const weaponDelayRaw = (data.delayMs);
         this.stats = new RawStats();
-        this.stats.wdPhys = (data.damagePhysHQ);
-        this.stats.wdMag = (data.damageMagHQ);
+        this.stats.wdPhys = forceNq ? data.damagePhys : data.damagePhysHQ;
+        this.stats.wdMag = forceNq ? data.damageMag : data.damageMagHQ;
         this.stats.weaponDelay = weaponDelayRaw ? (weaponDelayRaw / 1000.0) : 0;
-        for (const key in data.baseParamMapHQ) {
+        const paramMap = forceNq ? data.baseParamMap : data.baseParamMapHQ;
+        for (const key in paramMap) {
             const intKey = parseInt(key);
             const baseParam = statById(intKey);
             if (baseParam === undefined) {
                 // console.warn(`Undefined baseParam! ${key}`);
                 continue;
             }
-            this.stats[baseParam] = data.baseParamMapHQ[key];
+            this.stats[baseParam] = paramMap[key];
         }
         this.isUnique = data.unique;
         this.computeSubstats();
@@ -681,9 +700,10 @@ export class DataApiGearInfo implements GearItem {
     }
 
     applyIlvlData(nativeIlvlInfo: IlvlSyncInfo, syncIlvlInfo?: IlvlSyncInfo, level?: number) {
-        const statCapsNative = {};
+        const statCapsNative: RawStatsPart = {};
         Object.entries(this.stats).forEach(([stat, _]) => {
-            statCapsNative[stat] = nativeIlvlInfo.substatCap(this.occGearSlotName, stat as RawStatKey);
+            const rsk = stat as RawStatKey;
+            statCapsNative[rsk] = nativeIlvlInfo.substatCap(this.occGearSlotName, rsk);
         });
         this.statCaps = statCapsNative;
         if (syncIlvlInfo && (syncIlvlInfo.ilvl < this.ilvl || level < this.equipLvl)) {
@@ -692,9 +712,10 @@ export class DataApiGearInfo implements GearItem {
             };
             this.syncedDownTo = syncIlvlInfo.ilvl;
             this.materiaSlots = [];
-            const statCapsSync = {};
+            const statCapsSync: RawStatsPart = {};
             Object.entries(this.stats).forEach(([stat, v]) => {
-                statCapsSync[stat] = syncIlvlInfo.substatCap(this.occGearSlotName, stat as RawStatKey);
+                const rsk = stat as RawStatKey;
+                statCapsSync[rsk] = syncIlvlInfo.substatCap(this.occGearSlotName, rsk);
             });
             this.stats = applyStatCaps(this.stats, statCapsSync);
             this.statCaps = statCapsSync;

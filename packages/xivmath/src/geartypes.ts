@@ -8,10 +8,8 @@ import {
     SupportedLevel
 } from "./xivconstants";
 
-import {CustomItemExport} from "@xivgear/core/customgear/custom_item";
-import {CustomFoodExport} from "@xivgear/core/customgear/custom_food";
 import {RawBonusStats, StatModification} from "./xivstats";
-import {TranslatableString} from "@xivgear/core/i18n/translation";
+import {TranslatableString} from "@xivgear/i18n/translation";
 
 export interface DisplayGearSlot {
 
@@ -198,6 +196,7 @@ export interface GearItem extends XivCombatItem {
     isUnique: boolean;
     acquisitionType: GearAcquisitionSource;
     relicStatModel: RelicStatModel | undefined;
+    isNqVersion: boolean;
 }
 
 export interface FoodStatBonus {
@@ -442,11 +441,9 @@ export interface LevelStats {
         } & { [K in RoleKey]?: number })
         | { [K in RoleKey]: number },
     // You can specify either 'default' and a non-exhaustive list, or an exhaustive list (i.e. every role).
-    mainStatPowerMod:
-        ({
-            'other': number
-        } & { [K in RoleKey]?: number })
-        | { [K in RoleKey]: number },
+    mainStatPowerMod: {
+        'other': number
+    } & { [K in RoleKey]?: number }
 }
 
 
@@ -469,6 +466,10 @@ export type RoleKey = typeof ROLES[number];
 export type Mainstat = typeof MAIN_STATS[number];
 export type Substat = (typeof FAKE_MAIN_STATS[number] | typeof SPECIAL_SUB_STATS[number]);
 
+/**
+ * JobDataConst represents the subset of job-related data which we do not pull from Xivapi.
+ * These are mostly manually curated.
+ */
 export interface JobDataConst {
     /**
      * The role of the job
@@ -575,6 +576,9 @@ export type JobMultipliers = {
     hp: number
 }
 
+/**
+ * JobData is the combination of {@link JobDataConst} and other data pulled from Xivapi.
+ */
 export interface JobData extends JobDataConst {
     jobStatMultipliers: JobMultipliers,
 }
@@ -585,32 +589,32 @@ export interface JobTrait {
     apply: (stats: RawBonusStats) => void;
 }
 
-export class GearSlotItem {
+export type GearSlotItem = {
     slot: EquipSlot;
     item: GearItem;
     slotId: keyof EquipmentSet;
 }
 
-export class EquipmentSet {
-    Weapon: EquippedItem | null;
-    OffHand: EquippedItem | null;
-    Head: EquippedItem | null;
-    Body: EquippedItem | null;
-    Hand: EquippedItem | null;
-    Legs: EquippedItem | null;
-    Feet: EquippedItem | null;
-    Ears: EquippedItem | null;
-    Neck: EquippedItem | null;
-    Wrist: EquippedItem | null;
-    RingLeft: EquippedItem | null;
-    RingRight: EquippedItem | null;
-
+export class EquipmentSet implements Record<EquipSlotKey, EquippedItem | null> {
+    Weapon: EquippedItem | null = null;
+    OffHand: EquippedItem | null = null;
+    Head: EquippedItem | null = null;
+    Body: EquippedItem | null = null;
+    Hand: EquippedItem | null = null;
+    Legs: EquippedItem | null = null;
+    Feet: EquippedItem | null = null;
+    Ears: EquippedItem | null = null;
+    Neck: EquippedItem | null = null;
+    Wrist: EquippedItem | null = null;
+    RingLeft: EquippedItem | null = null;
+    RingRight: EquippedItem | null = null;
 }
 
 export function cloneEquipmentSet(set: EquipmentSet) {
     const out = new EquipmentSet();
-    Object.entries(set).forEach(([slot, equipped]) => {
-        if (equipped instanceof EquippedItem) {
+    EquipSlots.forEach(slot => {
+        const equipped = set[slot];
+        if (equipped) {
             out[slot] = equipped.clone();
         }
     });
@@ -709,6 +713,33 @@ export interface SheetExport {
      */
     customFoods?: CustomFoodExport[],
 }
+
+export type CustomItemExport = {
+    ilvl: number;
+    equipLvl: number;
+    largeMateriaSlots: number;
+    smallMateriaSlots: number;
+    materiaGrade: number;
+    name: string;
+    fakeId: number;
+    slot: OccGearSlotKey;
+    isUnique: boolean;
+    stats: RawStats;
+    respectCaps: boolean;
+}
+
+export type CustomFoodExport = {
+    ilvl: number;
+    name: string;
+    fakeId: number;
+    vitalityBonus: FoodStatBonus;
+    primaryStat: Substat | null;
+    primaryStatBonus: FoodStatBonus;
+    secondaryStat: Substat | null;
+    secondaryStatBonus: FoodStatBonus;
+}
+
+
 
 export type RelicStatMemoryExport = {
     [p: number]: RelicStats;
@@ -850,6 +881,10 @@ export interface ItemSlotExport {
      * If this is a relic, represents the current stats of the relic.
      */
     relicStats?: RelicStatsExport,
+    /**
+     * Force this to be an NQ item instead of HQ if available.
+     */
+    forceNq?: boolean,
 }
 
 export type RelicStatsExport = {
@@ -885,7 +920,8 @@ export interface ItemDisplaySettings {
     maxILvl: number,
     minILvlFood: number,
     maxILvlFood: number,
-    higherRelics: boolean
+    higherRelics: boolean,
+    showNq: boolean,
 }
 
 export const AttackTypes = ['Unknown', 'Auto-attack', 'Spell', 'Weaponskill', 'Ability', 'Item'] as const;
@@ -1080,6 +1116,22 @@ export class EquippedItem {
     }
 }
 
+/**
+ * Represents different overrides to values used in calculating damage.
+ * This can and should be extended for other things that are specially overriden
+ * by abilities in the future.
+ */
+export type ScalingOverrides = {
+    /**
+     * Main stat multiplier. Overriden by abilities like Living Shadow and Bunshin.
+     */
+    mainStatMulti: number,
+    /**
+     * Weapon damage multiplier. Overriden by pet abilities and abilities with alternate
+     * actors, e.g. Earthly Star, Living Shadow, Queen, SMN abilities.
+     */
+    wdMulti: number,
+}
 
 // TODO: look at Int16Array and friends to see if this can be compressed further
 // Idea:
@@ -1088,13 +1140,16 @@ MicroSetExport has a single TypedArray, where we store items in a flat structure
 e.g. [slot1slotId, slot1itemId, slot1materiaCount, slot1materia1id, ... slot1materiaNid, slot2slotId, ... etc]
 Could even take it a step further and pack multiple sets into one big array.
  */
+
 /**
  * MicroSetExport is a minimal analog to {@link SetExport} which contains the bare minimum information
- * needed for brute force solving. This is useful for reducing memory usage.
+ * needed for brute force solving. This is useful for reducing memory usage. These are meant to be very dense in
+ * terms of memory, so they use hacks like adding 0.5 to item IDs to signify an NQ item.
  */
 export type MicroSetExport = MicroSlotExport[];
 
 export type FoodMicroSlotExport = [slot: "food", foodId: number];
+// The itemId in this case has 0.5 added to it to indicate an NQ item
 export type NormalItemMicroSlotExport = [slot: EquipSlotKey, itemId: number, ...materiaIds: (number | null)[]];
 export type RelicItemMicroSlotExport = [slot: EquipSlotKey, itemId: number, "relic", relicStats: RelicStatsExport];
 export type MicroSlotExport = FoodMicroSlotExport | NormalItemMicroSlotExport | RelicItemMicroSlotExport;
