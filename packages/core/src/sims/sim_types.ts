@@ -4,6 +4,7 @@ import {JobName, SupportedLevel} from "@xivgear/xivmath/xivconstants";
 import {AttackType, ComputedSetStats} from "@xivgear/xivmath/geartypes";
 import {ValueWithDev} from "@xivgear/xivmath/deviation";
 import {StatModification} from "@xivgear/xivmath/xivstats";
+import {EmptyGauge} from "./cycle_sim";
 
 /**
  * Represents the final result of a simulation run. Sim implementors should extend this type with
@@ -265,11 +266,19 @@ export type DamagingAbility = Readonly<{
  * above a certain level. Can be used to express e.g. traits increasing
  * the potency of skills, or granting new buffs.
  */
-export type LevelModifier = ({
+export type LevelModifier<X> = ({
         minLevel: number,
     })
-    & Omit<Partial<BaseAbility>, 'levelModifiers'>;
+    & Omit<Partial<X>, 'levelModifiers'>;
 
+export type LevelModifiable<X> = X & {
+    /**
+     * A list of level modifiers, that can override properties of the ability
+     * at the specified level. An action will have its properties overriden for
+     * the highest `minLevel` specified.
+     */
+    levelModifiers?: LevelModifier<X>[],
+}
 /**
  * Combo mode:
  * start: starts a combo.
@@ -285,7 +294,7 @@ export type ComboBehavior = ComboData['comboBehavior'];
  */
 export type AlternativeScaling = "Living Shadow Strength Scaling" | "Pet Action Weapon Damage";
 
-export type BaseAbility = Readonly<{
+export type BaseAbility = Readonly<LevelModifiable<{
     /**
      * Name of the ability.
      */
@@ -342,17 +351,11 @@ export type BaseAbility = Readonly<{
      */
     appDelay?: number,
     /**
-     * A list of level modifiers, that can override properties of the ability
-     * at the specified level. An action will have its properties overriden for
-     * the highest `minLevel` specified.
-     */
-    levelModifiers?: LevelModifier[],
-    /**
      * If the ability uses alternate scalings, such as Living Shadow Strength
      * scaling or using the pet action Weapon Damage multiplier.
      */
     alternativeScalings?: AlternativeScaling[],
-} & (NonDamagingAbility | DamagingAbility)>;
+}> & (LevelModifiable<NonDamagingAbility> | LevelModifiable<DamagingAbility>)>;
 
 
 /**
@@ -403,25 +406,25 @@ export type CdAbility = OriginCdAbility | SharedCdAbility;
 /**
  * Represents a GCD action
  */
-export type GcdAbility = BaseAbility & Readonly<{
+export type GcdAbility = BaseAbility & Readonly<LevelModifiable<{
     type: 'gcd';
     /**
      * If the ability's GCD can be lowered by sps/sks, put it here.
      */
     gcd: number,
-}>
+}>>
 
 /**
  * Represents an oGCD action
  */
-export type OgcdAbility = BaseAbility & Readonly<{
+export type OgcdAbility = BaseAbility & Readonly<LevelModifiable<{
     type: 'ogcd',
-}>;
+}>>;
 
-export type AutoAttack = BaseAbility & DamagingAbility & Readonly<{
+export type AutoAttack = BaseAbility & DamagingAbility & Readonly<LevelModifiable<{
     type: 'autoattack',
     // TODO
-}>;
+}>>;
 
 export type Ability = GcdAbility | OgcdAbility | AutoAttack;
 
@@ -431,12 +434,28 @@ export type DotDamageUnf = {
     actualTickCount?: number
 };
 
+export type HasGaugeCondition<GaugeManagerType> = {
+    gaugeConditionSatisfied(gaugeManager: GaugeManagerType): boolean;
+}
+
+export type HasGaugeUpdate<GaugeManagerType> = {
+    updateGauge(gaugeManager: GaugeManagerType): void;
+}
+
+export function hasGaugeCondition<GaugeManagerType>(ab: Ability): ab is Ability & HasGaugeCondition<GaugeManagerType> {
+    return 'gaugeConditionSatisfied' in ab;
+}
+
+export function hasGaugeUpdate<GaugeManagerType>(ab: Ability): ab is Ability & HasGaugeUpdate<GaugeManagerType> {
+    return 'updateGauge' in ab;
+}
+
 export type ComputedDamage = ValueWithDev;
 
 /**
  * Represents an ability actually being used
  */
-export type PreDmgUsedAbility = {
+export type PreDmgUsedAbility<GaugeDataType = {}> = {
     /**
      * The ability that was used
      */
@@ -492,13 +511,18 @@ export type PreDmgUsedAbility = {
      */
     lockTime: number
     /**
-     * Extra data relating to the ability used. Useful for sims which wish to attach their own gauge information
-     * for display in the results.
+     * Extra data relating to the ability used. Useful for sims which wish to attach their own extra information
+     * for display in the results. Deprecated for Gauge use - see gaugeAftrer.
      */
     extraData?: object
+
+    /**
+     * Gauge information.
+     */
+    gaugeAfter: GaugeDataType
 };
 
-export type PostDmgUsedAbility = PreDmgUsedAbility & {
+export type PostDmgUsedAbility<GaugeType = EmptyGauge> = PreDmgUsedAbility<GaugeType> & {
     directDamage: ComputedDamage,
     dot?: DotDamageUnf
 }
@@ -509,13 +533,13 @@ export type PostDmgUsedAbility = PreDmgUsedAbility & {
  * remaining for an entire GCD. Thus, we would have a PartialAbility with portion = (1.1s / 2.5s)
  *
  */
-export type PartiallyUsedAbility = PreDmgUsedAbility & {
+export type PartiallyUsedAbility<GaugeType = EmptyGauge> = PreDmgUsedAbility<GaugeType> & {
     portion: number
 };
 
-export type FinalizedAbility = {
+export type FinalizedAbility<GaugeType = EmptyGauge> = {
     usedAt: number,
-    original: PreDmgUsedAbility,
+    original: PreDmgUsedAbility<GaugeType>,
     totalDamage: number,
     totalDamageFull: ComputedDamage
     totalPotency: number,
@@ -626,9 +650,9 @@ export type BaseBuff = Readonly<{
      */
     modifyDamage?(controller: BuffController, damageResult: DamageResult, ability: Ability): DamageResult | void,
     /**
-     * Optional status effect ID. Used to provide an icon.
+     * Status effect ID. Used to provide an icon, and for equality checks. If not known/needed, use {@link }
      */
-    statusId?: number
+    statusId: number
     /**
      * Stack count of this buff. This should generally not be baked into the buff - it should be inserted at run time.
      */

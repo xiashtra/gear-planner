@@ -593,6 +593,17 @@ table {
         .gear-set-issue-icon {
           margin-right: 5px;
         }
+
+        .ffxiv-frameless-job-icon {
+          padding-left: 2px;
+          padding-right: 3px;
+          display: inline;
+          height: 1em;
+          vertical-align: -0.125em;
+          overflow: visible;
+          transform: scale(1.2);
+          filter: drop-shadow(0 2px 1px #0009) brightness(1.3);
+        }
       }
 
       &[col-id="icon"] {
@@ -1106,7 +1117,7 @@ job-picker {
       }
 
       td[col-id="sheetactions"] {
-        width: 50px;
+        width: 44px;
         max-height: 23px;
         height: 23px;
 
@@ -1175,7 +1186,6 @@ job-picker {
       overflow: auto;
       padding: 0;
       width: 100%;
-
 
       tr {
         height: 23px;
@@ -2490,16 +2500,18 @@ div.labeled-checkbox {
 
 input.gear-items-table-relic-stat-input, select.gear-items-table-relic-stat-input {
   //border: var(--soft-border);
-  border: 2px solid transparent;
+  border: none;
   padding: 0 0 0 0;
   background: var(--relic-stat-input-background-color);
   box-sizing: border-box;
   //margin: 1px;
   width: 100%;
   text-align: center;
+  font-size: 13px;
+  height: calc(100% - 4px);
 
   &.relic-validation-failed {
-    border: 2px solid red;
+    box-shadow: 1px 1px 2px red inset, -1px -1px 2px #ff6000 inset;
   }
 
   &:hover, &:active, &:focus {
@@ -3269,27 +3281,48 @@ rename-dialog {
   }
 }
 
+.ffxiv-frameless-job-icon {
+  aspect-ratio: 1;
+}
+
 .ffxiv-job-icon {
   display: block;
   aspect-ratio: 1;
   box-sizing: border-box;
+
+  border-radius: 20%;
+  border: 4px ridge #c47b00;
+
+  // Alt text formatting
+
+  // Don't let alt text extend the boundaries of the image
+  overflow: hidden;
+
+  font-size: 40%;
+  text-align: center;
   // Alt text should be white for better contrast
   color: white;
 
-  border-radius: 20%;
-  border: 4px ridge #927d59;
+  // This applies to the alt-text, but it only works on firefox
+  &::before {
+    margin: auto;
+    display: block;
+    position: relative;
+    translate: 0 -50%;
+    top: 50%;
+    content: var(--job-name);
 
-  &.job-picker-section-tank {
+  }
+
+  &.ffxiv-role-tank {
     --role-color: var(--role-color-tank);
   }
 
-  &.job-picker-section-healer {
+  &.ffxiv-role-healer {
     --role-color: var(--role-color-healer);
   }
 
-  &.job-picker-section-melee,
-  &.job-picker-section-range,
-  &.job-picker-section-caster {
+  &.ffxiv-role-dps {
     --role-color: var(--role-color-dps);
   }
 
@@ -3959,3 +3992,12 @@ expandable-text {
   }
 }
 
+
+.row-overlay-link {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}

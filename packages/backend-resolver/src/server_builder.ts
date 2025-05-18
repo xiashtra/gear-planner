@@ -10,9 +10,9 @@ import {
     SheetStatsExport,
     TopLevelExport
 } from "@xivgear/xivmath/geartypes";
-import {getBisSheet, getBisSheetFetchUrl} from "@xivgear/core/external/static_bis";
+import {getBisIndexUrl, getBisSheet, getBisSheetFetchUrl} from "@xivgear/core/external/static_bis";
 import {HEADLESS_SHEET_PROVIDER} from "@xivgear/core/sheet";
-import {JobName, MAX_PARTY_BONUS} from "@xivgear/xivmath/xivconstants";
+import {JOB_DATA, JobName, MAX_PARTY_BONUS} from "@xivgear/xivmath/xivconstants";
 import cors from '@fastify/cors';
 import {
     DEFAULT_DESC,
@@ -33,6 +33,8 @@ import fastifyWebResponse from "fastify-web-response";
 import {getFrontendPath, getFrontendServer} from "./frontend_file_server";
 import process from "process";
 import {extractSingleSet} from "@xivgear/core/util/sheet_utils";
+import {getJobIcons} from "./preload_helpers";
+import FastifyIP from 'fastify-ip';
 
 let initDone = false;
 
@@ -98,6 +100,11 @@ function buildServerBase() {
         ignoreDuplicateSlashes: true,
         // querystringParser: str => querystring.parse(str, '&', '=', {}),
     });
+    // Get the true IP from CF headers
+    fastifyInstance.register(FastifyIP, {
+        order: ['cf-connecting-ip'],
+        strict: true,
+    });
     fastifyInstance.register(cors, {
         methods: ['GET', 'OPTIONS'],
         strictPreflight: false,
@@ -107,12 +114,93 @@ function buildServerBase() {
         return 'up';
     });
 
+    process.on('uncaughtException', (reason: Error) => {
+        fastifyInstance.log.error(`uncaught exception: ${reason}`);
+    });
+    process.on('unhandledRejection', (reason, promise) => {
+        fastifyInstance.log.error(`unhandled rejection at: ${promise}, reason: ${reason}`);
+    });
+
     return fastifyInstance;
 }
 
 type NavResult = {
-    preloadUrl: URL | null,
-    sheetData: Promise<(ExportedData)>
+    fetchPreloads: URL[],
+    imagePreloads: Promise<URL[]>,
+    sheetData: Promise<ExportedData> | null,
+    name: Promise<string | undefined>,
+    description: Promise<string | undefined>,
+    job: Promise<JobName | undefined>,
+}
+
+type SheetSummaryData = {
+    name: string | undefined,
+    desc: string | undefined,
+    job: JobName | undefined,
+    multiJob: boolean,
+}
+
+function fillSheetData(sheetPreloadUrl: URL | null, sheetData: Promise<ExportedData>, osIndex: number | undefined): NavResult {
+    const processed: Promise<SheetSummaryData> = sheetData.then(exported => {
+        let set = undefined;
+        if (osIndex !== undefined && 'sets' in exported) {
+            set = exported.sets[osIndex] as SetExport;
+        }
+        return {
+            name: set?.['name'] || exported['name'],
+            desc: set?.['description'] || exported['description'],
+            job: exported.job,
+            multiJob: ('sets' in exported && osIndex === undefined && exported.isMultiJob) ?? false,
+        };
+    });
+    return {
+        fetchPreloads: sheetPreloadUrl === null ? [] : [sheetPreloadUrl],
+        // As nice as it would be to preload item images, that would require awaiting more calls, or keeping a
+        // DataManager around. Since the item icons have placeholder lookalikes anyway, it's not super important.
+        imagePreloads: processed.then(p => {
+            if (p.multiJob && p.job) {
+                const myRole = JOB_DATA[p.job].role;
+                return getJobIcons('frameless', thatJob => JOB_DATA[thatJob].role === myRole);
+            }
+            else {
+                return [];
+            }
+        }),
+        sheetData: sheetData,
+        name: processed.then(p => p.name),
+        description: processed.then(p => p.desc),
+        job: processed.then(p => p.job),
+    };
+}
+
+function fillBisBrowserData(path: string[]): NavResult {
+    const job = (path.find(element => element.toUpperCase() in JOB_DATA)?.toUpperCase() as JobName ?? undefined);
+    // Join the path parts with spaces, but make each individual part either start with a capital, or entirely capitalized
+    // if it looks like a job name. If path is empty, use undefined instead.
+    const label: string | undefined = path.length > 0 ? path.map(pathPart => {
+        const upper = pathPart.toUpperCase();
+        if (upper in JOB_DATA) {
+            return upper;
+        }
+        else if (upper) {
+            return `${pathPart.slice(0, 1).toUpperCase() + pathPart.slice(1)}`;
+        }
+        else {
+            return pathPart;
+        }
+    }).join(" ") : undefined;
+    const images = [];
+    if (path.length === 0) {
+        images.push(...getJobIcons('framed'));
+    }
+    return {
+        description: Promise.resolve(label ? `Best-in-Slot Gear Sets for ${label} in Final Fantasy XIV` : "Best-in-Slot Gear Sets for Final Fantasy XIV"),
+        job: Promise.resolve(job),
+        name: Promise.resolve(label ? label + ' BiS' : undefined),
+        fetchPreloads: [getBisIndexUrl()],
+        imagePreloads: Promise.resolve(images),
+        sheetData: null,
+    };
 }
 
 function resolveNavData(nav: NavPath | null): NavResult | null {
@@ -126,21 +214,14 @@ function resolveNavData(nav: NavPath | null): NavResult | null {
             return null;
         case "shortlink":
             // TODO: combine these into one call
-            return {
-                preloadUrl: getShortlinkFetchUrl(nav.uuid),
-                sheetData: getShortLink(nav.uuid).then(JSON.parse),
-            };
+            return fillSheetData(getShortlinkFetchUrl(nav.uuid), getShortLink(nav.uuid).then(JSON.parse), nav.onlySetIndex);
         case "setjson":
         case "sheetjson":
-            return {
-                preloadUrl: null,
-                sheetData: Promise.resolve(nav.jsonBlob as TopLevelExport),
-            };
+            return fillSheetData(null, Promise.resolve(nav.jsonBlob as TopLevelExport), undefined);
         case "bis":
-            return {
-                preloadUrl: getBisSheetFetchUrl(nav.path),
-                sheetData: getBisSheet(nav.path).then(JSON.parse),
-            };
+            return fillSheetData(getBisSheetFetchUrl(nav.path), getBisSheet(nav.path).then(JSON.parse), nav.onlySetIndex);
+        case "bisbrowser":
+            return fillBisBrowserData(nav.path);
     }
     throw Error(`Unable to resolve nav result: ${nav.type}`);
 }
@@ -165,16 +246,16 @@ export function buildStatsServer() {
         const nav = parsePath(state);
         request.log.info(pathPaths, 'Path');
         const navResult = resolveNavData(nav);
-        if (nav !== null && navResult !== null) {
+        if (nav !== null && navResult !== null && navResult.sheetData !== null) {
             const exported: ExportedData = await navResult.sheetData;
             reply.header("cache-control", "max-age=7200, public");
-            if ('sets' in exported) {
+            if ('sets' in exported && osIndex === undefined) {
                 reply.send({
                     isValid: false,
                     reason: "full sheets cannot be embedded",
                 } satisfies EmbedCheckResponse);
             }
-            else if ("embed" in nav && nav.embed) {
+            else if ('embed' in nav && nav.embed) {
                 reply.send({
                     isValid: true,
                 } satisfies EmbedCheckResponse);
@@ -203,7 +284,7 @@ export function buildStatsServer() {
         const nav = parsePath(state);
         request.log.info(pathPaths, 'Path');
         const navResult = resolveNavData(nav);
-        if (nav !== null && navResult !== null) {
+        if (nav !== null && navResult !== null && navResult.sheetData !== null) {
             const exported: ExportedData = await navResult.sheetData;
             reply.header("cache-control", "max-age=7200, public");
             reply.send(exported);
@@ -221,7 +302,7 @@ export function buildStatsServer() {
         const nav = parsePath(state);
         request.log.info(pathPaths, 'Path');
         const navResult = resolveNavData(nav);
-        if (nav !== null && navResult !== null) {
+        if (nav !== null && navResult !== null && navResult.sheetData !== null) {
             const exported: ExportedData = await navResult.sheetData;
             const out = await importExportSheet(request, exported as (SetExport | SheetExport), nav);
             reply.header("cache-control", "max-age=7200, public");
@@ -292,6 +373,7 @@ export function buildPreviewServer() {
 
     const fastifyInstance = buildServerBase();
 
+    // TODO: split preview and stats server into different images, since stats server does not need DOM stuff
     const parser = new DOMParser();
 
     let extraScripts: string[];
@@ -325,16 +407,8 @@ export function buildPreviewServer() {
             request.log.info(pathPaths, 'Path');
             const navResult = resolveNavData(nav);
             if (navResult !== null) {
-                const exported = await navResult.sheetData;
-                const sheetDataPreloadUrl = navResult.preloadUrl;
-                let name: string;
-                let desc: string;
-                let set = undefined;
-                if (osIndex !== undefined && 'sets' in exported) {
-                    set = exported.sets[osIndex] as SetExport;
-                }
-                name = set?.['name'] || exported['name'] || "";
-                desc = set?.['description'] || exported['description'] || "";
+                let name = await navResult.name || "";
+                let desc = await navResult.description || "";
                 if (name.length > PREVIEW_MAX_NAME_LENGTH) {
                     name = name.substring(0, PREVIEW_MAX_NAME_LENGTH) + "…";
                 }
@@ -368,25 +442,32 @@ export function buildPreviewServer() {
                     head.append(newTitle);
                 }
 
-                function addFetchPreload(url: string) {
+                function addPreload(url: string, as: string) {
                     const preload = doc.createElement('link');
                     preload.rel = 'preload';
                     preload.href = url;
                     // For some reason, `.as = 'fetch'` doesn't work, but this does.
-                    preload.setAttribute("as", 'fetch');
+                    preload.setAttribute("as", as);
                     preload.setAttribute("crossorigin", "");
                     head.appendChild(preload);
                 }
 
+                function addFetchPreload(url: string) {
+                    addPreload(url, 'fetch');
+                }
+
+                function addImagePreload(url: string) {
+                    addPreload(url, 'image');
+                }
+
                 // Inject preload properties based on job
                 // The rest are part of the static html
-                const job = exported.job;
+                const job = await navResult.job;
                 if (job) {
                     addFetchPreload(`https://data.xivgear.app/Items?job=${job}`);
                 }
-                if (sheetDataPreloadUrl) {
-                    addFetchPreload(sheetDataPreloadUrl.toString());
-                }
+                navResult.fetchPreloads.forEach(preload => addFetchPreload(preload.toString()));
+                (await navResult.imagePreloads).forEach(preload => addImagePreload(preload.toString()));
                 if (extraScripts) {
                     function addExtraScript(url: string, extraProps: object = {}) {
                         const script = doc.createElement('script');

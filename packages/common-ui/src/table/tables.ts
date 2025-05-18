@@ -586,8 +586,19 @@ export interface CustomColumnSpec<RowDataType, CellDataType, ColumnDataType = an
     dataValue?: ColumnDataType;
     headerStyler?: (value: ColumnDataType, colHeader: CustomTableHeaderCell<RowDataType, CellDataType, ColumnDataType>) => void;
     extraClasses?: string[];
+    titleSetter?: (value: CellDataType, rowValue: RowDataType, cell: CustomCell<RowDataType, CellDataType>) => string | null;
+    finisher?: (value: CellDataType, rowValue: RowDataType, cell: CustomCell<RowDataType, CellDataType>) => void;
 }
 
+/**
+ * Wrapper function for a coldef. Doesn't do anything that CustomTable wouldn't do naturally when receiving a
+ * CustomColumnSpec, but helps with typing. Typescript doesn't allow an array type of generics to narrow the type
+ * parameters internally. In other words, we won't get proper validation of CellDataType nor ColDataType - i.e. won't
+ * validate that your getter's return type matches your renderer's input type (nor any of the other fields that
+ * involve the cell data type).
+ *
+ * @param cdef The column spec.
+ */
 export function col<RowDataType, CellDataType = string, ColumnDataType = any>(cdef: CustomColumnSpec<RowDataType, CellDataType, ColumnDataType>): CustomColumn<RowDataType, CellDataType, ColumnDataType> {
     return new CustomColumn<RowDataType, CellDataType, ColumnDataType>(cdef);
 }
@@ -630,6 +641,8 @@ export class CustomColumn<RowDataType, CellDataType = string, ColumnDataType = a
     fixedWidth: number | undefined = undefined;
     dataValue?: ColumnDataType;
     headerStyler?: (value: typeof this.dataValue, colHeader: CustomTableHeaderCell<RowDataType, CellDataType, ColumnDataType>) => void;
+    titleSetter?: (value: CellDataType, rowValue: RowDataType, cell: CustomCell<RowDataType, CellDataType>) => string | null;
+    finisher?: (value: CellDataType, rowValue: RowDataType, cell: CustomCell<RowDataType, CellDataType>) => void;
 }
 
 export type RefreshableOpts = {
@@ -641,6 +654,8 @@ export class CustomRow<RowDataType> extends HTMLTableRowElement implements Refre
     table: CustomTable<RowDataType, any>;
     dataColMap: Map<CustomColumn<RowDataType, unknown, unknown>, CustomCell<RowDataType, unknown>> = new Map<CustomColumn<RowDataType, unknown, unknown>, CustomCell<RowDataType, unknown>>();
     private _selected: boolean = false;
+    beforeElements: Node[] = [];
+    afterElements: Node[] = [];
 
     constructor(dataItem: RowDataType, table: CustomTable<RowDataType, any>, opts?: RefreshableOpts) {
         super();
@@ -683,7 +698,7 @@ export class CustomRow<RowDataType> extends HTMLTableRowElement implements Refre
                 }
             }
         }
-        this.replaceChildren(...newColElements);
+        this.replaceChildren(...this.beforeElements, ...newColElements, ...this.afterElements);
         for (const value of this.dataColMap.values()) {
             value.refreshFull();
         }
@@ -736,9 +751,10 @@ export class CustomCell<RowDataType, CellDataType> extends HTMLTableCellElement 
     }
 
     refreshFull() {
+        const rowValue = this.dataItem;
         let node: Node | null;
         try {
-            this._cellValue = this.colDef.getter(this.dataItem);
+            this._cellValue = this.colDef.getter(rowValue);
             node = this.colDef.renderer(this._cellValue, this.row.dataItem);
             if (node) {
                 this.colDef.colStyler(this._cellValue, this, node, this.row.dataItem);
@@ -754,16 +770,20 @@ export class CustomCell<RowDataType, CellDataType> extends HTMLTableCellElement 
         }
         else {
             // Due to some of the styling, the child must be a real HTML element and not a raw text node
-            // Also, some elements don't support ::before, so insert a dummy span
             if (node.nodeType === this.TEXT_NODE) {
+                // TODO: this logic should take place above, so that colStyler can always take an HTMLElement instead
+                // of potentially being fed a raw text node and being unable to style it.
                 span.textContent = node.textContent ?? '';
                 this.replaceChildren(span);
             }
             else {
+                // Also, some elements don't support ::before, so insert a dummy span to work around this
                 this.replaceChildren(span, node);
             }
         }
         this.refreshSelection();
+        this.refreshTitle();
+        this.colDef.finisher?.(this._cellValue, this.row.dataItem, this);
     }
 
     refreshSelection() {
@@ -790,6 +810,17 @@ export class CustomCell<RowDataType, CellDataType> extends HTMLTableCellElement 
         return this.colDef.rowCondition(this.row.dataItem);
     }
 
+    refreshTitle() {
+        if (this.colDef.titleSetter) {
+            const newTitle = this.colDef.titleSetter(this._cellValue, this.row.dataItem, this);
+            if (newTitle) {
+                this.title = newTitle;
+            }
+            else {
+                this.removeAttribute('title');
+            }
+        }
+    }
 }
 
 export type ColDefs<RowDataType> = (CustomColumn<RowDataType> | CustomColumnSpec<RowDataType, any>)[];

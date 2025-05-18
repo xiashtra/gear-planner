@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // REQUIRED - sets up fake HTML classes
-import 'global-jsdom/register';
 import {describe, it} from "mocha";
 import {assize, dia, exampleGearSet, filler, lily, misery, nop, pom} from "./common_values";
 import * as assert from "assert";
@@ -202,7 +201,7 @@ describe('Default sims', () => {
                 return existing;
             }
             else {
-                const newSheet = HEADLESS_SHEET_PROVIDER.fromScratch(undefined, "", job, level, undefined);
+                const newSheet = HEADLESS_SHEET_PROVIDER.fromScratch(undefined, "", job, level, undefined, false);
                 const promise = newSheet.load();
                 sampleSheetLoad.set(newSheet, promise);
                 sampleSheets.push(newSheet);

@@ -40,7 +40,7 @@ import {
     XivCombatItem
 } from "@xivgear/xivmath/geartypes";
 import {Inactivitytimer} from "@xivgear/util/inactivitytimer";
-import {addStats, finalizeStats, finalizeStatsInt} from "@xivgear/xivmath/xivstats";
+import {addStats, finalizeStats, finalizeStatsInt, getBaseMainStat} from "@xivgear/xivmath/xivstats";
 import {GearPlanSheet} from "./sheet";
 import {isMateriaAllowed} from "./materia/materia_utils";
 
@@ -235,6 +235,7 @@ export function previewItemStatDetail(item: GearItem, stat: RawStatKey): ItemSin
 type GearSetCheckpoint = {
     equipment: EquipmentSet;
     food: FoodItem | undefined;
+    jobOverride: JobName | null;
 }
 // GearSetCheckpointNode establishes a doubly-linked list of checkpoints.
 // This allows us to easily remove the 'redo' tree if you undo and then make a change.
@@ -254,7 +255,7 @@ export class CharacterGearSet {
     listeners: (() => void)[] = [];
     private _dirtyComp: boolean = true;
     private _lastResult: GearSetResult;
-    private _jobOverride: JobName;
+    private _jobOverride: JobName | null = null;
     private _raceOverride: RaceName;
     private _food: FoodItem | undefined;
     private readonly _sheet: GearPlanSheet;
@@ -274,6 +275,11 @@ export class CharacterGearSet {
         this._sheet = sheet;
         this.name = "";
         this.equipment = new EquipmentSet();
+        if (sheet.isMultiJob) {
+            // This acts as a default. For a variety of reasons, such as changing the main class of a sheet, we want
+            // this to be set to the current job upon sheet creation/import.
+            this.earlySetJobOverride(sheet.classJobName);
+        }
     }
 
 
@@ -320,9 +326,38 @@ export class CharacterGearSet {
     }
 
     set food(food: FoodItem | undefined) {
-        this.invalidate();
         this._food = food;
+        this.invalidate();
         this.notifyListeners();
+    }
+
+    get jobOverride(): JobName | null {
+        return this._jobOverride;
+    }
+
+    set jobOverride(job: JobName | null) {
+        this._jobOverride = job;
+        const newEffectiveJob = this.job;
+        // Unequip items which are no longer usable under the new job
+        Object.keys(this.equipment).forEach((slot: EquipSlotKey) => {
+            const equipped = this.equipment[slot];
+            if (equipped && !equipped.gearItem.usableByJob(newEffectiveJob)) {
+                this.setEquip(slot, null);
+            }
+        });
+        // TODO: technically, this should check if it is the active sheet
+        this.sheet.gearDisplaySettingsUpdateNow();
+        this.forceRecalc();
+    }
+
+    /**
+     * Like setting jobOverride, but does not trigger any hooks. Useful when initializing an imported set, as the
+     * hooks and such will not have been configured correctly.
+     *
+     * @param job
+     */
+    earlySetJobOverride(job: JobName | null) {
+        this._jobOverride = job;
     }
 
     /**
@@ -426,12 +461,15 @@ export class CharacterGearSet {
         this.notifyListeners();
     }
 
+    toEquippedItem(item: GearItem): EquippedItem;
+    toEquippedItem(item: null): null;
+
     /**
      * Preview an item as if it were equipped
      *
      * @param item The item with relic stat memory and such applied
      */
-    toEquippedItem(item: GearItem) {
+    toEquippedItem(item: GearItem | null): EquippedItem | null {
         if (item === null) {
             return null;
         }
@@ -526,6 +564,10 @@ export class CharacterGearSet {
         return this.results.computedStats;
     }
 
+    get job(): JobName {
+        return this._jobOverride ?? this.sheet.classJobName;
+    }
+
     /**
      * Get the computed stats ({@link computedStats}) and issues ({@link issues}).
      */
@@ -535,7 +577,7 @@ export class CharacterGearSet {
             return this._lastResult;
         }
         const combinedStats = new RawStats(EMPTY_STATS);
-        const classJob = this._jobOverride ?? this._sheet.classJobName;
+        const classJob = this.job;
         const classJobStats = this._jobOverride ? this._sheet.statsForJob(this._jobOverride) : this._sheet.classJobStats;
         const raceStats = this._raceOverride ? getRaceStats(this._raceOverride) : this._sheet.raceStats;
         const level = this._sheet.level;
@@ -555,7 +597,7 @@ export class CharacterGearSet {
 
         // Base stats based on job and level
         for (const statKey of MAIN_STATS) {
-            combinedStats[statKey] += Math.floor(levelStats.baseMainStat * classJobStats.jobStatMultipliers[statKey] / 100);
+            combinedStats[statKey] += getBaseMainStat(levelStats, classJobStats, statKey);
         }
         for (const statKey of FAKE_MAIN_STATS) {
             combinedStats[statKey] += Math.floor(levelStats.baseMainStat);
@@ -570,7 +612,7 @@ export class CharacterGearSet {
         this._dirtyComp = false;
         // Add BLU weapon damage modifier
         combinedStats.wdMag += classJob === "BLU" ? bluWdfromInt(gearIntStat) : 0;
-        const computedStats = finalizeStats(combinedStats, this._food?.bonuses ?? {}, level, levelStats, classJob, classJobStats, this._sheet.partyBonus, this._sheet.race);
+        const computedStats = finalizeStats(combinedStats, this._food?.bonuses ?? {}, level, levelStats, classJob, classJobStats, this._sheet.partyBonus, raceStats);
         const leftRing = this.getItemInSlot('RingLeft');
         const rightRing = this.getItemInSlot('RingRight');
         if (leftRing && leftRing.isUnique && rightRing && rightRing.isUnique) {
@@ -672,7 +714,7 @@ export class CharacterGearSet {
      * @param stat
      * @param materiaOverride
      */
-    getStatDetail(slotId: keyof EquipmentSet, stat: RawStatKey, materiaOverride?: Materia[]): ReturnType<typeof this.getEquipStatDetail> {
+    getStatDetail(slotId: keyof EquipmentSet, stat: RawStatKey, materiaOverride?: Materia[]): ReturnType<CharacterGearSet['getEquipStatDetail']> {
         const equip = this.equipment[slotId];
         return this.getEquipStatDetail(equip, stat, materiaOverride);
     }
@@ -764,7 +806,7 @@ export class CharacterGearSet {
                 overcapAmount: 0,
                 effectiveAmount: meldedStatValue,
                 fullAmount: meldedStatValue,
-                cap: meldedStatValue,
+                cap: cap,
             };
         }
         // Overcapped
@@ -940,6 +982,7 @@ export class CharacterGearSet {
         const checkpoint: GearSetCheckpoint = {
             equipment: cloneEquipmentSet(this.equipment),
             food: this._food,
+            jobOverride: this._jobOverride,
         };
         const prev = this.currentCheckpoint;
         // Initial checkpoint
@@ -1001,6 +1044,9 @@ export class CharacterGearSet {
         const newEquipment = cloneEquipmentSet(checkpoint.equipment);
         Object.assign(this.equipment, newEquipment);
         this._food = checkpoint.food;
+        if (checkpoint.jobOverride !== this._jobOverride) {
+            this.jobOverride = checkpoint.jobOverride;
+        }
         try {
             this.forceRecalc();
             this._undoHook();
