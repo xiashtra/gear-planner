@@ -247,11 +247,15 @@ function foodTableStatColumn(sheet: GearPlanSheet, set: CharacterGearSet, stat: 
 
 
 export class FoodItemsTable extends CustomTable<FoodItem, TableSelectionModel<FoodItem, never, never, FoodItem | undefined>> {
-    constructor(sheet: GearPlanSheet, gearSet: CharacterGearSet) {
+    constructor(sheet: GearPlanSheet, private readonly gearSet: CharacterGearSet) {
         super();
         this.classList.add("food-items-table");
         this.classList.add("food-items-edit-table");
         this.classList.add("hoverable");
+        this.rowTitleSetter = (rowValue: FoodItem) => {
+            const name = rowValue.nameTranslation.asCurrentLang;
+            return `${name} (${rowValue.id})`;
+        };
         super.columns = [
             {
                 shortName: "ilvl",
@@ -322,14 +326,40 @@ export class FoodItemsTable extends CustomTable<FoodItem, TableSelectionModel<Fo
 
             },
         };
+        const osfCb = new FieldBoundCheckBox(gearSet.sheet.itemDisplaySettings, 'showOneStatFood', {
+            id: 'show-osf-cb',
+        });
+        const oneStatFoodWithLabel = labeledCheckbox('Show Food with One Relevant Stat', osfCb);
+        // This should not trigger the show/hide control
+        oneStatFoodWithLabel.addEventListener('click', e => e.stopPropagation());
+
+        const showHideRow = makeShowHideRow('Food', gearSet.isSlotCollapsed('food'), (val, count) => {
+            gearSet.setSlotCollapsed('food', val);
+            recordSheetEvent('hideFood', sheet, {
+                hidden: val,
+            });
+            this.updateShowHide();
+        }, [oneStatFoodWithLabel]);
         const displayItems = [...sheet.foodItemsForDisplay];
         displayItems.sort((left, right) => left.ilvl - right.ilvl);
         if (displayItems.length > 0) {
-            super.data = [new HeaderRow(), ...displayItems];
+            super.data = [showHideRow.row, new HeaderRow(), ...displayItems];
         }
         else {
-            super.data = [new HeaderRow(), new TitleRow('No items available - please check your filters')];
+            super.data = [showHideRow.row, new HeaderRow(), new TitleRow('No items available - please check your filters')];
         }
+        this.updateShowHide();
+    }
+
+    private updateShowHide() {
+        this.dataRowMap.forEach((row, value) => {
+            if (this.gearSet.isSlotCollapsed('food') && !this.selectionModel.isRowSelected(row)) {
+                row.style.display = 'none';
+            }
+            else {
+                row.style.display = '';
+            }
+        });
     }
 }
 
@@ -560,6 +590,24 @@ export class GearItemsTable extends CustomTable<GearSlotItem, TableSelectionMode
         this.classList.add("gear-items-table");
         this.classList.add("gear-items-edit-table");
         this.classList.add("hoverable");
+        this.rowTitleSetter = (rowValue: GearSlotItem) => {
+            const name = rowValue.item.nameTranslation.asCurrentLang;
+            let title: string;
+            if (rowValue.item.acquisitionType === 'custom') {
+                title = `${name} (Custom Item)`;
+            }
+            else {
+                title = `${name} (${rowValue.item.id})`;
+                const formattedAcqSrc = formatAcquisitionSource(rowValue.item.acquisitionType);
+                if (formattedAcqSrc) {
+                    title += `\nAcquired from: ${formattedAcqSrc}`;
+                }
+            }
+            if (rowValue.item.isSyncedDown) {
+                title += `\nSynced to ${rowValue.item.syncedDownTo}`;
+            }
+            return title;
+        };
         super.columns = [
             {
                 shortName: "ilvl",
@@ -596,24 +644,9 @@ export class GearItemsTable extends CustomTable<GearSlotItem, TableSelectionMode
                     return quickElement('div', ['item-name-holder-editable'], [quickElement('span', [], [shortenItemName(name)]), trashButton]);
                 },
                 colStyler: (value, colElement, internalElement, rowValue) => {
-                    let title: string;
-                    if (rowValue.item.acquisitionType === 'custom') {
-                        title = `${value} (Custom Item)`;
-                    }
-                    else {
-                        title = `${value} (${rowValue.item.id})`;
-                        const formattedAcqSrc = formatAcquisitionSource(rowValue.item.acquisitionType);
-                        if (formattedAcqSrc) {
-                            title += `\nAcquired from: ${formattedAcqSrc}`;
-                        }
-                    }
-                    if (rowValue.item.isSyncedDown) {
-                        title += `\nSynced to ${rowValue.item.syncedDownTo}`;
-                    }
-                    colElement.title = title;
                 },
             }),
-            {
+            col({
                 shortName: "mats",
                 displayName: "Mat",
                 getter: item => {
@@ -626,14 +659,23 @@ export class GearItemsTable extends CustomTable<GearSlotItem, TableSelectionMode
                         span.textContent = value.unsyncedVersion.materiaSlots.length.toString();
                         span.style.textDecoration = "line-through";
                         span.style.opacity = "50%";
-                        span.title = "Melds unavailable due to ilvl sync";
                     }
                     else {
                         span.textContent = value.materiaSlots.length.toString();
                     }
                     return span;
                 },
-            },
+                titleSetter: (value, rowValue, cell) => {
+                    if (value.isSyncedDown) {
+                        return "Melds unavailable due to ilvl sync";
+                    }
+                    else {
+                        const lgCount = value.materiaSlots.filter(slot => slot.allowsHighGrade).length;
+                        const smCount = value.materiaSlots.filter(slot => !slot.allowsHighGrade).length;
+                        return `${lgCount} full + ${smCount} restricted`;
+                    }
+                },
+            }),
             col({
                 shortName: "wd",
                 displayName: "WD",

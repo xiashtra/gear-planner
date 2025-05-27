@@ -15,6 +15,7 @@ import {
 } from "@xivgear/xivmath/xivconstants";
 import {
     cloneEquipmentSet,
+    CollapsibleSlot,
     ComputedSetStats,
     EquipmentSet,
     EquippedItem,
@@ -36,8 +37,7 @@ import {
     RelicStatMemoryExport,
     RelicStats,
     SetDisplaySettingsExport,
-    SlotMateriaMemoryExport,
-    XivCombatItem
+    SlotMateriaMemoryExport
 } from "@xivgear/xivmath/geartypes";
 import {Inactivitytimer} from "@xivgear/util/inactivitytimer";
 import {addStats, finalizeStats, finalizeStatsInt, getBaseMainStat} from "@xivgear/xivmath/xivstats";
@@ -159,14 +159,14 @@ export class MateriaMemory {
 
 
 export class SetDisplaySettings {
-    private readonly hiddenSlots: Map<EquipSlotKey, boolean> = new Map();
+    private readonly hiddenSlots: Map<CollapsibleSlot, boolean> = new Map();
 
-    isSlotHidden(slot: EquipSlotKey): boolean {
+    isSlotHidden(slot: CollapsibleSlot): boolean {
         const hidden = this.hiddenSlots.get(slot);
         return hidden === true;
     }
 
-    setSlotHidden(slot: EquipSlotKey, hidden: boolean) {
+    setSlotHidden(slot: CollapsibleSlot, hidden: boolean) {
         this.hiddenSlots.set(slot, hidden);
     }
 
@@ -175,8 +175,9 @@ export class SetDisplaySettings {
         EquipSlots.forEach(slot => this.setSlotHidden(slot, hidden));
     }
 
+    // these import/export methods are not needed - are they used anywhere?
     export(): SetDisplaySettingsExport {
-        const hiddenSlots: EquipSlotKey[] = [];
+        const hiddenSlots: CollapsibleSlot[] = [];
         this.hiddenSlots.forEach((value, key) => {
             if (value) {
                 hiddenSlots.push(key);
@@ -368,7 +369,7 @@ export class CharacterGearSet {
      * @param item
      * @param materiaAutoFillController
      */
-    setEquip(slot: EquipSlotKey, item: GearItem, materiaAutoFillController?: MateriaAutoFillController) {
+    setEquip(slot: EquipSlotKey, item: GearItem | null, materiaAutoFillController?: MateriaAutoFillController) {
         if (this.equipment[slot]?.gearItem === item) {
             return;
         }
@@ -544,7 +545,7 @@ export class CharacterGearSet {
     /**
      * All items currently equipped (excluding food)
      */
-    get allEquippedItems(): XivCombatItem[] {
+    get allEquippedItems(): GearItem[] {
         return Object.values(this.equipment)
             .filter(slotEquipment => slotEquipment && slotEquipment.gearItem)
             .map((slotEquipment: EquippedItem) => slotEquipment.gearItem);
@@ -938,11 +939,11 @@ export class CharacterGearSet {
      * Whether a particular slot should be collapsed on the UI.
      * @param slotId
      */
-    isSlotCollapsed(slotId: EquipSlotKey) {
+    isSlotCollapsed(slotId: CollapsibleSlot) {
         return this.displaySettings.isSlotHidden(slotId);
     }
 
-    setSlotCollapsed(slotId: EquipSlotKey, val: boolean) {
+    setSlotCollapsed(slotId: CollapsibleSlot, val: boolean) {
         this.displaySettings.setSlotHidden(slotId, val);
     }
 

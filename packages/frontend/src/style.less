@@ -214,7 +214,7 @@ img.item-rarity-relic {
     }
 
     &.ability-ogcd {
-      &:before {
+      &::before {
         content: '⤷';
         transform: scale(1.5);
         font-weight: bold;
@@ -223,9 +223,18 @@ img.item-rarity-relic {
     }
 
     &.ability-autoattack {
-      &:before {
+      &::before {
         content: '🗘';
         transform: scale(1.2) rotate(50deg);
+      }
+    }
+
+    &.ability-item {
+      span {
+        // Make it so that long item names won't expand the column. This is useful because item names
+        // (e.g. "Grade 3 Gemdraught of Strength") are often very long and will expand the column.
+        // This may result in the columns "jumping" due to lazy rendering.
+        width: 100px;
       }
     }
   }
@@ -276,6 +285,7 @@ img.item-rarity-relic {
 
   td, th {
     &[col-id='time'] {
+      min-width: 65px;
       width: 75px;
       max-width: 75px;
     }

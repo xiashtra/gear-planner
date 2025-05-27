@@ -1,6 +1,6 @@
-import {col, CustomColumnSpec, CustomTable, HeaderRow} from "@xivgear/common-ui/table/tables";
+import {col, CustomColumnSpec, CustomTable, HeaderRow, LazyTableStrategy} from "@xivgear/common-ui/table/tables";
 import {toRelPct} from "@xivgear/util/strutils";
-import {AbilityIcon} from "../../components/abilities";
+import {AbilityIcon, actionNameTranslated} from "../../components/abilities";
 import {BuffListDisplay} from "./buff_list_display";
 import {DisplayRecordFinalized, isFinalizedAbilityUse} from "@xivgear/core/sims/cycle_sim";
 import {AutoAttack, Buff, CombinedBuffEffect, GcdAbility, OgcdAbility} from "@xivgear/core/sims/sim_types";
@@ -30,10 +30,19 @@ function alignedValue(left: string, right: string): HTMLElement {
     return quickElement('div', ['split-aligned-value'], [quickElement('span', [], [left]), quickElement('span', [], [right])]);
 }
 
+const lazy: LazyTableStrategy = {
+    immediateRows: 100,
+    minRows: 250,
+};
+
 export class AbilitiesUsedTable extends CustomTable<DisplayRecordFinalized> {
 
-    constructor(abilitiesUsed: readonly DisplayRecordFinalized[], extraColumns: CustomColumnSpec<DisplayRecordFinalized, unknown, unknown>[] = []) {
+    constructor(abilitiesUsed: readonly DisplayRecordFinalized[], extraColumns: CustomColumnSpec<DisplayRecordFinalized, unknown, unknown>[], scrollRoot: HTMLElement = null) {
         super();
+        this.lazyRenderStrategy = {
+            ...lazy,
+            altRoot: scrollRoot,
+        };
         this.style.tableLayout = 'fixed';
         this.classList.add('abilities-used-table');
         this.columns = [
@@ -63,7 +72,7 @@ export class AbilitiesUsedTable extends CustomTable<DisplayRecordFinalized> {
                     }
                 },
             }),
-            {
+            col({
                 shortName: 'ability',
                 displayName: 'Ability',
                 getter: used => isFinalizedAbilityUse(used) ? used.ability : used.label,
@@ -80,14 +89,13 @@ export class AbilitiesUsedTable extends CustomTable<DisplayRecordFinalized> {
                         if (!ability.noIcon) {
                             if (ability.itemId) {
                                 out.appendChild(new ItemIcon(ability.itemId));
+                                out.classList.add('ability-item');
                             }
                             else if (ability.id) {
                                 out.appendChild(new AbilityIcon(ability.id));
                             }
                         }
-                        const abilityNameSpan = document.createElement('span');
-                        abilityNameSpan.textContent = ability.name;
-                        abilityNameSpan.classList.add('ability-name');
+                        const abilityNameSpan = actionNameTranslated(ability);
                         out.appendChild(abilityNameSpan);
                         return out;
                     }
@@ -95,7 +103,21 @@ export class AbilitiesUsedTable extends CustomTable<DisplayRecordFinalized> {
                         return document.createTextNode(ability);
                     }
                 },
-            },
+                titleSetter: (ability) => {
+                    if (ability instanceof Object) {
+                        if (ability.itemId) {
+                            return `${ability.name}: Item #${ability.itemId}`;
+                        }
+                        else if (ability.id > 0) {
+                            return `${ability.name}: Action #${ability.id}`;
+                        }
+                        else {
+                            return ability.name;
+                        }
+                    }
+                    return null;
+                },
+            }),
             col({
                 shortName: 'unbuffed-pot',
                 displayName: 'Pot',
@@ -161,6 +183,7 @@ export class AbilitiesUsedTable extends CustomTable<DisplayRecordFinalized> {
                     }
                 },
             }),
+            ...extraColumns,
             col({
                 shortName: 'Total Buffs',
                 displayName: 'Total Buffs',
@@ -194,12 +217,13 @@ export class AbilitiesUsedTable extends CustomTable<DisplayRecordFinalized> {
                     return new BuffListDisplay(buffs);
                 },
             }),
-            ...extraColumns,
         ];
         this.setNewData(abilitiesUsed);
     }
 
     setNewData(used: readonly DisplayRecordFinalized[]) {
+        // With lazy rendering, faster to not attempt reuse
+        this.dataRowMap.clear();
         this.data = [new HeaderRow(), ...used];
     }
 }
