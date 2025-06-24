@@ -17,11 +17,12 @@ import {
     SupportedLevel
 } from "@xivgear/xivmath/xivconstants";
 import {
+    DEFAULT_SHEET_METADATA,
     EquippedItem,
     EquipSlotKey,
     EquipSlots,
     FoodItem,
-    GearItem,
+    GearItem, IlvlSyncInfo,
     ItemDisplaySettings,
     ItemSlotExport,
     JobData,
@@ -38,6 +39,7 @@ import {
     SetExportExternalSingle,
     SetStatsExport,
     SheetExport,
+    SheetMetadata,
     SheetStatsExport,
     SimExport,
     Substat
@@ -52,9 +54,9 @@ import {getDefaultSims, getRegisteredSimSpecs, getSimSpecByStub} from "./sims/si
 import {getNextSheetInternalName} from "./persistence/saved_sheets";
 import {CustomItem} from "./customgear/custom_item";
 import {CustomFood} from "./customgear/custom_food";
-import {IlvlSyncInfo} from "./datamanager_xivapi";
 import {statsSerializationProxy} from "@xivgear/xivmath/xivstats";
 import {isMateriaAllowed} from "./materia/materia_utils";
+import {SpecialStatType} from "@xivgear/data-api-client/dataapi";
 
 export type SheetCtorArgs = ConstructorParameters<typeof GearPlanSheet>
 export type SheetContstructor<SheetType extends GearPlanSheet> = (...values: SheetCtorArgs) => SheetType;
@@ -114,6 +116,7 @@ export class SheetProvider<SheetType extends GearPlanSheet> {
             customFoods: importedData.flatMap(imp => imp.customFoods ?? []),
             timestamp: importedData[0].timestamp,
             isMultiJob: false,
+            specialStats: importedData[0].specialStats ?? null,
         });
         if (importedData[0].sims === undefined) {
             gearPlanSheet.addDefaultSims();
@@ -233,6 +236,10 @@ export class GearPlanSheet {
 
     private _timestamp: Date;
 
+    // Occult Crescent et al
+    private _activeSpecialStat: SpecialStatType | null = null;
+
+
     // Can't make ctor private for custom element, but DO NOT call this directly - use fromSaved or fromScratch
     constructor(sheetKey: string, importedData: SheetExport) {
         console.log(importedData);
@@ -245,6 +252,7 @@ export class GearPlanSheet {
         // TODO: why does this default to WHM? Shouldn't it just throw?
         this.classJobName = importedData.job ?? 'WHM';
         this.isMultiJob = importedData.isMultiJob;
+        this._activeSpecialStat = (importedData.specialStats ?? null) as SpecialStatType | null;
         this.altJobs = this.isMultiJob ? [
             ...ALL_COMBAT_JOBS.filter(job => JOB_DATA[job].role === JOB_DATA[this.classJobName].role
                 // Don't include the primary job in the list of alt jobs
@@ -300,6 +308,10 @@ export class GearPlanSheet {
      */
     get saveKey() {
         return this._saveKey;
+    }
+
+    get metaSaveKey() {
+        return this._saveKey + '-meta';
     }
 
     /**
@@ -434,6 +446,8 @@ export class GearPlanSheet {
             }
         }
         this._dmRelevantFood = this.dataManager.allFoodItems.filter(food => this.isStatRelevant(food.primarySubStat) || this.isStatRelevant(food.secondarySubStat));
+        // This is set when importing - but it needs to know about items first. Thus we have to redo this now.
+        this.activeSpecialStat = this._activeSpecialStat;
         this._setupDone = true;
     }
 
@@ -449,6 +463,23 @@ export class GearPlanSheet {
             console.log("Saving sheet " + this.sheetName);
             this._timestamp = new Date();
             const fullExport = this.exportSheet(false);
+            const msk = this.metaSaveKey;
+            const metaRaw = localStorage.getItem(msk);
+            let meta: SheetMetadata;
+            if (metaRaw) {
+                meta = {
+                    ...DEFAULT_SHEET_METADATA,
+                    ...JSON.parse(metaRaw),
+                };
+            }
+            else {
+                meta = DEFAULT_SHEET_METADATA;
+            }
+            meta = {
+                ...meta,
+                currentVersion: (meta.currentVersion ?? 1) + 1,
+            };
+            localStorage.setItem(msk, JSON.stringify(meta));
             localStorage.setItem(this.saveKey, JSON.stringify(fullExport));
         }
         else {
@@ -576,6 +607,7 @@ export class GearPlanSheet {
             customFoods: this._customFoods.map(cf => cf.export()),
             timestamp: this.timestamp.getTime(),
             isMultiJob: this.isMultiJob,
+            specialStats: this.activeSpecialStat ?? null,
         };
         if (!external) {
             out.saveKey = this._saveKey;
@@ -723,6 +755,7 @@ export class GearPlanSheet {
             ext.partyBonus = this._partyBonus;
             ext.race = this._race;
             ext.job = set.job;
+            ext.specialStats = this.activeSpecialStat;
         }
         else {
             if (set.relicStatMemory) {
@@ -1358,5 +1391,17 @@ export class GearPlanSheet {
 
     get timestamp(): Date {
         return this._timestamp;
+    }
+
+    get activeSpecialStat(): SpecialStatType | null {
+        return this._activeSpecialStat;
+    }
+
+    set activeSpecialStat(value: SpecialStatType | null) {
+        this._activeSpecialStat = value;
+        this.dataManager.allItems.forEach(item => {
+            item.activeSpecialStat = value;
+        });
+        this.recalcAll();
     }
 }

@@ -10,6 +10,7 @@ import {
 
 import {RawBonusStats, StatModification, StatPreModifications} from "./xivstats";
 import {TranslatableString} from "@xivgear/i18n/translation";
+import {SpecialStatType} from "@xivgear/data-api-client/dataapi";
 
 export interface DisplayGearSlot {
 
@@ -200,6 +201,8 @@ export interface GearItem extends XivCombatItem {
     rarity: number;
 
     usableByJob(job: JobName): boolean;
+
+    activeSpecialStat: SpecialStatType | null;
 }
 
 export interface FoodStatBonus {
@@ -728,7 +731,25 @@ export interface SheetExport {
      * True if this is a multi-job sheet (within a single role)
      */
     isMultiJob?: boolean,
+
+    specialStats?: string | null,
 }
+
+export type SheetMetadata = {
+    currentVersion: number,
+    lastSyncedVersion: number,
+    sortOrder: number | null,
+    hasConflict: boolean,
+    forcePush: boolean,
+}
+
+export const DEFAULT_SHEET_METADATA: SheetMetadata = {
+    currentVersion: 1,
+    lastSyncedVersion: 0,
+    sortOrder: null,
+    hasConflict: false,
+    forcePush: false,
+};
 
 export type CustomItemExport = {
     ilvl: number;
@@ -865,6 +886,8 @@ export interface SetExportExternalSingle extends SetExport {
      * Unix timestamp
      */
     timestamp?: number,
+
+    specialStats?: string | null,
 }
 
 /**
@@ -1244,3 +1267,8 @@ export type FoodMicroSlotExport = [slot: "food", foodId: number];
 export type NormalItemMicroSlotExport = [slot: EquipSlotKey, itemId: number, ...materiaIds: (number | null)[]];
 export type RelicItemMicroSlotExport = [slot: EquipSlotKey, itemId: number, "relic", relicStats: RelicStatsExport];
 export type MicroSlotExport = FoodMicroSlotExport | NormalItemMicroSlotExport | RelicItemMicroSlotExport;
+
+export type IlvlSyncInfo = {
+    readonly ilvl: number;
+    substatCap(slot: OccGearSlotKey, statsKey: RawStatKey): number;
+}

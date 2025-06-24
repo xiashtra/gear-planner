@@ -194,6 +194,7 @@ body {
       cursor: pointer;
 
     }
+
     * {
       text-decoration: none;
     }
@@ -221,11 +222,15 @@ body {
       //height: 20px;
       box-sizing: border-box;
       //background-color: var(--fg-color);
-      padding: 8px 10px 12px 10px;
+      padding: 8px 8px 12px 8px;
       margin: 0;
       text-decoration: none;
       display: inline-block;
       .button-auto-transition();
+
+      span {
+        white-space: nowrap;
+      }
     }
 
     a:hover {
@@ -712,7 +717,9 @@ button {
 
 input {
   &[type="text"],
-  &[type="number"] {
+  &[type="number"],
+  &[type="password"],
+  &[type="email"] {
     color: var(--fg-color);
     //background-color: var(--input-background-color);
     .standard-border-radius();
@@ -1084,6 +1091,7 @@ job-picker {
 #content-area > .my-sheets-section {
   .named-section-content-area {
     width: 600px;
+    scrollbar-gutter: stable;
 
     table.gear-sheets-table {
       overflow: auto;
@@ -1095,6 +1103,10 @@ job-picker {
         height: 23px;
         max-height: 23px;
         cursor: pointer;
+        &.dragging {
+          z-index: 5;
+          opacity: 0.75;
+        }
       }
 
       tr:first-child {
@@ -1111,8 +1123,7 @@ job-picker {
         height: 23px;
 
         &[col-id="sheetjob"] {
-          // Why does this work
-          width: 0;
+          width: 60px;
           text-align: right;
 
           img {
@@ -1150,8 +1161,35 @@ job-picker {
         }
       }
 
+      .search-row-outer {
+        cursor: unset;
+      }
+
+      .search-row {
+        display: flex;
+        gap: 5px;
+        width: 100%;
+        * {
+          box-sizing: border-box;
+        }
+        input {
+          width: 100%;
+          padding-left: 5px;
+        }
+        button {
+          aspect-ratio: 1;
+          padding: 0;
+        }
+      }
+
+      .searched {
+        .drag-handle {
+          display: none;
+        }
+      }
+
       td[col-id="sheetactions"] {
-        width: 44px;
+        width: 52px;
         max-height: 23px;
         height: 23px;
 
@@ -2529,6 +2567,10 @@ div.labeled-checkbox {
       }
     }
 
+    .level-sync-info {
+      display: inline-block;
+    }
+
     .show-hide-button {
       display: revert;
     }
@@ -2615,6 +2657,8 @@ show-hide-button {
     .modal-content-area {
       overflow: auto;
       margin-bottom: 10px;
+      // Padding to make sure that glow around input doesn't get cut off
+      padding: 5px;
     }
 
     .modal-close-button {
@@ -3413,6 +3457,11 @@ body.modern {
   --perfect-tiering-box-shadow: none;
   //--item-name-col-width: 250px;
   //--button-height: 25px;
+
+  input {
+    border: none !important;
+  }
+
   table {
 
     border-radius: 10px;
@@ -3518,7 +3567,7 @@ body.modern {
       .shadow();
       width: fit-content;
       display: flex;
-      align-items: baseline;
+      align-items: normal;
       margin-left: auto;
       margin-right: auto;
       background-color: var(--table-bg-color);
@@ -3528,13 +3577,25 @@ body.modern {
       padding-left: var(--mmai-border-radius);
       padding-right: var(--mmai-border-radius);
 
+      @media(width < 525px) {
+        a span {
+          display: none;
+        }
+        .svg-glyph {
+          padding-left: 0 !important;
+          padding-right: 0 !important;
+        }
+      }
+
       .svg-glyph {
         //height: 1.3em;
         //width: 1.3em;
         scale: 1.5;
+        padding-left: 5px;
         padding-right: 5px;
 
         &:only-child {
+          padding-left: 0;
           padding-right: 0;
         }
 
@@ -3561,7 +3622,7 @@ body.modern {
     margin-bottom: 5px;
   }
 
-  button#show-hide-menu-button {
+  button#show-hide-menu-button, button#help-button {
     .shadow();
   }
 
@@ -3894,7 +3955,6 @@ settings-modal {
 
 input {
   background: var(--input-background-color);
-  border: none !important;
 }
 
 button.narrow-button {
@@ -3975,6 +4035,7 @@ expandable-text {
     &.cycle-sim-results-multirotation {
       grid-template-columns: 1fr 1fr;
       grid-template-rows: auto 1fr;
+
       .cycle-sim-abilities-holder {
         grid-column-end: span 2;
         min-height: 100px;
@@ -3989,9 +4050,11 @@ expandable-text {
         }
       }
     }
+
     &.cycle-sim-results-onerotation {
       grid-template-rows: auto 1fr;
       grid-template-columns: 100%;
+
       .cycle-sim-abilities-holder {
         grid-column-end: span 1;
       }
@@ -4025,6 +4088,7 @@ expandable-text {
       th {
         text-align: center;
       }
+
       td[col-id="dps"] {
         min-width: 85px;
         text-align: right;
@@ -4069,4 +4133,32 @@ expandable-text {
   bottom: 0;
   left: 0;
   right: 0;
+}
+
+.validating-form {
+  // If needed, this could be moved to a separate anchor element
+  position: relative;
+
+  .validation-message-holder {
+    display: none;
+
+    &.failed {
+      display: block;
+      color: var(--fg-color);
+    }
+
+    position: absolute;
+    width: 100%;
+    height: min-content;
+    box-sizing: border-box;
+    translate: 0 -100%;
+    background-color: color-mix(in srgb, var(--bg-color) 90%, transparent);
+    box-shadow: var(--issue-error-color) 0 0 5px 2px;
+    border-radius: var(--standard-border-radius);
+    padding: 10px;
+  }
+
+  .validation-message-close {
+    float: right;
+  }
 }

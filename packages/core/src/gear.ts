@@ -26,6 +26,7 @@ import {
     GearItem,
     GearSetIssue,
     GearSetResult,
+    JobData,
     Materia,
     MateriaAutoFillController,
     MateriaAutoFillPrio,
@@ -237,6 +238,8 @@ type GearSetCheckpoint = {
     equipment: EquipmentSet;
     food: FoodItem | undefined;
     jobOverride: JobName | null;
+    name: string;
+    description: string;
 }
 // GearSetCheckpointNode establishes a doubly-linked list of checkpoints.
 // This allows us to easily remove the 'redo' tree if you undo and then make a change.
@@ -567,6 +570,10 @@ export class CharacterGearSet {
 
     get job(): JobName {
         return this._jobOverride ?? this.sheet.classJobName;
+    }
+
+    get classJobStats(): JobData {
+        return this.sheet.statsForJob(this.job);
     }
 
     /**
@@ -984,6 +991,8 @@ export class CharacterGearSet {
             equipment: cloneEquipmentSet(this.equipment),
             food: this._food,
             jobOverride: this._jobOverride,
+            name: this._name,
+            description: this._description,
         };
         const prev = this.currentCheckpoint;
         // Initial checkpoint
@@ -1045,6 +1054,8 @@ export class CharacterGearSet {
         const newEquipment = cloneEquipmentSet(checkpoint.equipment);
         Object.assign(this.equipment, newEquipment);
         this._food = checkpoint.food;
+        this._name = checkpoint.name;
+        this._description = checkpoint.description;
         if (checkpoint.jobOverride !== this._jobOverride) {
             this.jobOverride = checkpoint.jobOverride;
         }

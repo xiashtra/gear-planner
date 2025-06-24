@@ -93,6 +93,7 @@ import {ExpandableText} from "@xivgear/common-ui/components/expandy_text";
 import {SheetInfoModal} from "./sheet_info_modal";
 import {FramelessJobIcon, JobIcon} from "./job_icon";
 import {setDataManagerErrorReporter} from "@xivgear/core/data_api_client";
+import {SpecialStatType} from "@xivgear/data-api-client/dataapi";
 
 const noSeparators = (set: CharacterGearSet) => !set.isSeparator;
 
@@ -924,7 +925,7 @@ export class GearSetEditor extends HTMLElement {
             this.gearTables.forEach(tbl => tbl.recheckHiddenSlots());
         };
 
-        const weaponTable = new GearItemsTable(this.sheet, this.gearSet, itemMapping, this.sheet.classJobStats.offhand ? ['Weapon', 'OffHand'] : ['Weapon'], showHideAllCallback);
+        const weaponTable = new GearItemsTable(this.sheet, this.gearSet, itemMapping, this.gearSet.classJobStats.offhand ? ['Weapon', 'OffHand'] : ['Weapon'], showHideAllCallback);
         const leftSideDiv = document.createElement('div');
         const rightSideDiv = document.createElement('div');
 
@@ -983,16 +984,16 @@ export class GearSetEditor extends HTMLElement {
     }
 
     private undoRedoHotkeyHandler = (ev: KeyboardEvent) => {
-        // ignore anything that would naturally handle an undo
-        if (ev.target instanceof Element
-            && (ev.target.tagName === 'input'
-                || ev.target.tagName === 'select'
-            )) {
-            return;
-        }
         // Ctrl-Z = undo
         // Ctrl-Shift-Z = redo
         if (ev.ctrlKey && ev.key.toLowerCase() === 'z') {
+            // ignore anything that would naturally handle an undo
+            if (ev.target instanceof Element) {
+                const tag = ev.target.tagName?.toLowerCase();
+                if (tag === 'input' || tag === 'select' || tag === 'textarea') {
+                    return;
+                }
+            }
             if (ev.shiftKey) {
                 this.gearSet.redo();
             }
@@ -1147,7 +1148,7 @@ export class GearSetViewer extends HTMLElement {
         const rightSideSlots = ['Ears', 'Neck', 'Wrist', 'RingLeft', 'RingRight'] as const;
 
         if (itemMapping.get('Weapon') || itemMapping.get('OffHand')) {
-            const weaponTable = new GearItemsViewTable(this.sheet, this.gearSet, itemMapping, this.sheet.classJobStats.offhand ? ['Weapon', 'OffHand'] : ['Weapon']);
+            const weaponTable = new GearItemsViewTable(this.sheet, this.gearSet, itemMapping, this.gearSet.classJobStats.offhand ? ['Weapon', 'OffHand'] : ['Weapon']);
             weaponTable.classList.add('weapon-table');
             this.appendChild(weaponTable);
         }
@@ -1319,6 +1320,7 @@ export class GearPlanSheetGui extends GearPlanSheet {
     readonly midBarArea: HTMLDivElement;
     readonly toolbarHolder: HTMLDivElement;
     private _simGuis: SimulationGui<any, any, any>[];
+    private specialStatDropdown: FieldBoundDataSelect<GearPlanSheet, SpecialStatType | null>;
 
     get simGuis() {
         return this._simGuis;
@@ -1487,10 +1489,16 @@ export class GearPlanSheetGui extends GearPlanSheet {
 
         this._gearPlanTable = new GearPlanTable(this, item => this.editorItem = item);
         this.showAdvancedStats = SETTINGS.viewDetailedStats ?? false;
-        // Buttons and controls at the bottom of the table
-        // this.buttonRow.id = 'gear-sheet-button-row';
 
         const sheetOptions = new DropdownActionMenu('More Actions...');
+
+        const siFmt = formatSyncInfo(this.syncInfo, this.level);
+        if (siFmt !== null) {
+            const span = quickElement('span', [], [siFmt]);
+            const ilvlSyncLabel = quickElement('div', ['like-a-button', 'level-sync-info'], [span]);
+            ilvlSyncLabel.title = 'To change the item level sync, click the "Save As" button to create a new sheet with a different level/ilvl.';
+            buttonsArea.appendChild(ilvlSyncLabel);
+        }
 
         if (!this.isViewOnly) {
             const addRowButton = makeActionButton("New Gear Set", () => {
@@ -1521,10 +1529,6 @@ export class GearPlanSheetGui extends GearPlanSheet {
                     this.addGearSet(set, undefined, true);
                 },
             });
-            // const renameButton = makeActionButton("Sheet Name/Description", () => {
-            //     startRenameSheet(this);
-            // });
-            // buttonsArea.appendChild(renameButton);
             buttonsArea.appendChild(sheetOptions);
         }
         sheetOptions.addAction({
@@ -1534,14 +1538,6 @@ export class GearPlanSheetGui extends GearPlanSheet {
                 new SheetInfoModal(this, selectedGearSet).attachAndShow();
             },
         });
-
-        const siFmt = formatSyncInfo(this.syncInfo, this.level);
-        if (siFmt !== null) {
-            const span = quickElement('span', [], [siFmt]);
-            const ilvlSyncLabel = quickElement('div', ['like-a-button'], [span]);
-            ilvlSyncLabel.title = 'To change the item level sync, click the "Save As" button to create a new sheet with a different level/ilvl.';
-            buttonsArea.appendChild(ilvlSyncLabel);
-        }
 
         if (this.isViewOnly) {
             const saveAsButton = makeActionButton("Save As", () => {
@@ -1640,6 +1636,31 @@ export class GearPlanSheetGui extends GearPlanSheet {
             });
         });
         buttonsArea.appendChild(partySizeDropdown);
+
+        // TODO: this should only show once you select an occult crescent item
+        this.specialStatDropdown = new FieldBoundDataSelect<GearPlanSheet, SpecialStatType | null>(
+            this,
+            'activeSpecialStat',
+            value => {
+                switch (value) {
+                    case null:
+                        return 'No Special Stats';
+                    // case SpecialStatType.OccultCrescent:
+                    //     return 'Occult Crescent';
+                    default:
+                        return camel2title(value);
+                }
+            },
+            [null, ...Object.values(SpecialStatType)]
+        );
+        // TODO: move this logic to xivconstants or something
+        // We only want this to show if our sheet looks like it might be for one of these duties with special bonuses,
+        // or if the user somehow got into a state where they have a special stat set despite the sheet normally
+        // not being eligible for one.
+        if (!(this.activeSpecialStat || (this.level === 100 && this.ilvlSync === 700))) {
+            this.specialStatDropdown.style.display = 'none';
+        }
+        buttonsArea.appendChild(this.specialStatDropdown);
 
         if (this.saveKey) {
             this.headerArea.style.display = 'none';
@@ -2118,6 +2139,15 @@ export class GearPlanSheetGui extends GearPlanSheet {
         }
         area.replaceChildren("This set is part of a sheet: ", linkElement);
         area.style.display = '';
+    }
+
+    get activeSpecialStat(): SpecialStatType | null {
+        return super.activeSpecialStat;
+    }
+
+    set activeSpecialStat(value: SpecialStatType | null) {
+        super.activeSpecialStat = value;
+        this.resetEditorArea();
     }
 }
 
