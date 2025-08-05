@@ -10,16 +10,19 @@
  * ---------------------------------------------------------------
  */
 
-export enum TableLimitsCapacityMode {
-  PROVISIONED = "PROVISIONED",
-  ON_DEMAND = "ON_DEMAND",
+export interface DeleteSheetRequest {
+  /** @format int32 */
+  lastSyncedVersion?: number;
+  /** @format int32 */
+  newSheetVersion?: number;
+  /** @format int32 */
+  newSheetVersionKey?: number | null;
 }
 
 export interface DeleteSheetResponse {
-  deleted?: boolean;
+  success?: boolean;
+  conflict?: boolean;
 }
-
-export type EnumEnumEnum = object;
 
 export interface GetPreferencesResponse {
   found?: boolean;
@@ -35,7 +38,6 @@ export interface GetSheetResponse {
 
 export interface GetSheetsResponse {
   sheets?: SheetMetadata[];
-  deletedSheets?: string[];
 }
 
 export interface PutPreferencesRequest {
@@ -49,10 +51,12 @@ export interface PutSheetRequest {
   lastSyncedVersion?: number;
   /** @format int32 */
   newSheetVersion?: number;
-  sheetName?: string;
+  /** @format int32 */
+  newSheetVersionKey?: number | null;
   /** @format double */
   sortOrder?: number | null;
-  sheetData?: Record<string, any>;
+  sheetData: Record<string, any>;
+  sheetSummary: SheetSummary;
 }
 
 export interface PutSheetResponse {
@@ -60,34 +64,36 @@ export interface PutSheetResponse {
   conflict?: boolean;
 }
 
-export interface RawNoSqlTableEnumEnumEnumObject {
-  initialized?: boolean;
-  tableLimits?: TableLimits;
-  tableDdl?: string;
-  tableIndicesDdl?: Record<string, EnumEnumEnum>;
-}
-
 export interface SheetMetadata {
   saveKey?: string;
-  name?: string;
   /** @format int32 */
   version?: number;
+  /** @format int32 */
+  versionKey?: number;
   /** @format double */
   sortOrder?: number | null;
+  deleted?: boolean;
+  summary?: SheetSummary;
 }
 
-export interface TableLimits {
+export interface SheetSummary {
+  /** @maxLength 64 */
+  job: string;
+  /** @maxLength 128 */
+  name: string;
+  multiJob?: boolean;
   /** @format int32 */
-  readUnits?: number;
-  /** @format int32 */
-  writeUnits?: number;
-  /** @format int32 */
-  storageGB?: number;
-  mode?: TableLimitsCapacityMode;
+  level?: number;
+  /**
+   * @format int32
+   * @min 0
+   */
+  isync?: number | null;
 }
 
 export interface UserPreferences {
   lightMode?: boolean;
+  /** @maxLength 64 */
   languageOverride?: string | null;
 }
 
@@ -367,16 +373,10 @@ export class UserDataClient<
      * @request GET:/readyz
      * @response `200` `string` readyCheck 200 response
      */
-    readyCheck: (
-      query: {
-        tables: RawNoSqlTableEnumEnumEnumObject[];
-      },
-      params: RequestParams = {},
-    ) =>
+    readyCheck: (params: RequestParams = {}) =>
       this.request<string, any>({
         path: `/readyz`,
         method: "GET",
-        query: query,
         ...params,
       }),
   };
@@ -481,11 +481,17 @@ export class UserDataClient<
      * @secure
      * @response `200` `DeleteSheetResponse` deleteSheet 200 response
      */
-    deleteSheet: (sheetId: string, params: RequestParams = {}) =>
+    deleteSheet: (
+      sheetId: string,
+      data: DeleteSheetRequest,
+      params: RequestParams = {},
+    ) =>
       this.request<DeleteSheetResponse, any>({
         path: `/userdata/sheets/${sheetId}`,
         method: "DELETE",
+        body: data,
         secure: true,
+        type: ContentType.Json,
         format: "json",
         ...params,
       }),

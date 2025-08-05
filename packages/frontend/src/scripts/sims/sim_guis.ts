@@ -20,6 +20,7 @@ import {WarSimGui} from "./tank/war_sheet_sim_ui";
 import {GnbSimGui} from "./tank/gnb_sheet_sim_ui";
 import {PldSimGui} from "./tank/pld_sheet_sim_ui";
 import {pldSKSSimGui} from "./tank/pldsks_sheet_sim_ui";
+import {BlmSimGui} from "./caster/blm_sim_ui";
 import {MPSimGui} from "./healer/healer_mp_sim_ui";
 
 import {astNewSheetSpec} from "@xivgear/core/sims/healer/ast_sheet_sim";
@@ -40,6 +41,7 @@ import {drkSpec} from "@xivgear/core/sims/tank/drk/drk_sheet_sim";
 import {gnbSpec} from "@xivgear/core/sims/tank/gnb/gnb_sheet_sim";
 import {pldSpec} from "@xivgear/core/sims/tank/pld/pld_sheet_sim";
 import {pldSKSSheetSpec} from "@xivgear/core/sims/tank/pld/pldsks_sim";
+import {blmSpec} from "@xivgear/core/sims/caster/blm/blm_sheet_sim";
 import {BluBreath60Spec} from "@xivgear/core/sims/blu/blu_breath60";
 import {BluFlame120Spec} from "@xivgear/core/sims/blu/blu_flame120";
 import {BluFlame60Spec} from "@xivgear/core/sims/blu/blu_flame60";
@@ -58,7 +60,7 @@ function registerGui<X extends Simulation<SimResult, unknown, unknown>>(simSpec:
     simGuiMap.set(simSpec as SimSpec<never, never>, guiCtor as SimGuiCtor<never>);
 }
 
-function getGuiCtor<X extends Simulation<never, never, never>>(simSpec: SimSpec<X, never>): SimGuiCtor<X> {
+function getGuiCtor<X extends Simulation<SimResult, unknown, unknown>>(simSpec: SimSpec<X, never>): SimGuiCtor<X> {
     return simGuiMap.get(simSpec as SimSpec<never, never>);
 }
 
@@ -100,6 +102,7 @@ registerGui(samSpec, SamSimGui);
 // Ranged
 registerGui(dncDtSheetSpec, BaseUsageCountSimGui);
 // Caster
+registerGui(blmSpec, BlmSimGui);
 registerGui(BluWinged120Spec, BluSimGui);
 registerGui(BluFlame120Spec, BluSimGui);
 registerGui(BluBreath60Spec, BluSimGui);

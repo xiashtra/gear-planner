@@ -15,7 +15,8 @@ import {
     DisplayGearSlotKey,
     FoodItem,
     GearAcquisitionSource,
-    GearItem, IlvlSyncInfo,
+    GearItem,
+    IlvlSyncInfo,
     JobMultipliers,
     Materia,
     MateriaSlot,
@@ -27,16 +28,12 @@ import {
 import {BaseParamToStatKey, RelevantBaseParam} from "./external/xivapitypes";
 import {getRelicStatModelFor} from "./relicstats/relicstats";
 import {requireNumber, requireString} from "./external/data_validators";
-import {
-    DataApiClient,
-    GearAcquisitionSource as AcqSrc,
-    SpecialStatType
-} from "@xivgear/data-api-client/dataapi";
+import {DataApiClient, GearAcquisitionSource as AcqSrc, SpecialStatType} from "@xivgear/data-api-client/dataapi";
 import {BaseParamMap, DataManager, DmJobs} from "./datamanager";
 import {applyStatCaps} from "./gear";
 import {toTranslatable, TranslatableString} from "@xivgear/i18n/translation";
-import {RawStatsPart} from "@xivgear/util/types";
-import {DATA_API_CLIENT, ApiFoodData, ApiItemData, ApiMateriaData, checkResponse} from "./data_api_client";
+import {RawStatsPart} from "@xivgear/util/util_types";
+import {ApiFoodData, ApiItemData, ApiMateriaData, checkResponse, DATA_API_CLIENT} from "./data_api_client";
 import {addStats} from "@xivgear/xivmath/xivstats";
 
 export class NewApiDataManager implements DataManager {
@@ -64,15 +61,15 @@ export class NewApiDataManager implements DataManager {
         this.apiClient = DATA_API_CLIENT;
     }
 
-    private _allItems: DataApiGearInfo[];
-    private _allMateria: Materia[];
-    private _allFoodItems: DataApiFoodInfo[];
-    private _jobMultipliers: Map<JobName, JobMultipliers>;
-    private _baseParams: BaseParamMap;
-    private _isyncPromise: Promise<Map<number, IlvlSyncInfo>>;
-    private _isyncData: Map<number, IlvlSyncInfo>;
-    private _maxIlvlForEquipLevel: Map<number, number>;
-    private _maxIlvlForEquipLevelWeapon: Map<number, number>;
+    private _allItems: DataApiGearInfo[] | undefined;
+    private _allMateria: Materia[] | undefined;
+    private _allFoodItems: DataApiFoodInfo[] | undefined;
+    private _jobMultipliers: Map<JobName, JobMultipliers> | undefined;
+    private _baseParams: BaseParamMap | undefined;
+    private _isyncPromise: Promise<Map<number, IlvlSyncInfo>> | undefined;
+    private _isyncData: Map<number, IlvlSyncInfo> | undefined;
+    private _maxIlvlForEquipLevel: Map<number, number> | undefined;
+    private _maxIlvlForEquipLevelWeapon: Map<number, number> | undefined;
 
     private queryBaseParams() {
         return this.apiClient.baseParams.baseParams();
@@ -83,15 +80,15 @@ export class NewApiDataManager implements DataManager {
             this._isyncPromise = Promise.all([baseParamPromise, this.apiClient.itemLevel.itemLevels()]).then(responses => {
                 const outMap = new Map<number, IlvlSyncInfo>();
                 const jobStats = getClassJobStats(this._classJob);
-                for (const row of checkResponse(responses[1]).data.items) {
-                    const ilvl = row.rowId;
+                for (const row of checkResponse(responses[1]).data!.items!) {
+                    const ilvl = row.rowId!;
                     // Unroll the ItemLevel object into a direct mapping from RawStatKey => modifier
                     // BaseParam data is trickier. First, we need to convert from a list to a map, where the keys are the stat.
-                    const baseParams = this._baseParams;
+                    const baseParams = this._baseParams!;
                     outMap.set(ilvl, {
                         ilvl: ilvl,
                         substatCap(slot: OccGearSlotKey, statsKey: RawStatKey): number {
-                            let ilvlModifier: number | null;
+                            let ilvlModifier: number | undefined;
                             switch (statsKey) {
                                 case "hp":
                                     ilvlModifier = row.HP;
@@ -143,20 +140,26 @@ export class NewApiDataManager implements DataManager {
                                     break;
                                 default:
                                     console.warn(`Bad ilvl modifer! ${statsKey}:${slot}`);
-                                    ilvlModifier = null;
+                                    ilvlModifier = undefined;
                                     break;
-
                             }
-                            const baseParamModifier = baseParams[statsKey as RawStatKey][slot];
+
+                            function calcCap(slot: OccGearSlotKey): number {
+                                const baseParamModifier: number = baseParams[statsKey as RawStatKey][slot];
+                                const jobCap = jobStats.itemStatCapMultipliers?.[statsKey];
+                                if (jobCap !== undefined) {
+                                    return Math.round(jobCap * Math.round(ilvlModifier * baseParamModifier / 1000));
+                                }
+                                else {
+                                    return Math.round(ilvlModifier * baseParamModifier / 1000);
+                                }
+                            }
                             // Theoretically, this is safe even for multi-job because the item stat cap multipliers
                             // are role-bound.
-                            const jobCap = jobStats.itemStatCapMultipliers?.[statsKey];
-                            if (jobCap !== undefined) {
-                                return Math.round(jobCap * Math.round(ilvlModifier * baseParamModifier / 1000));
+                            if (slot === 'OffHand') {
+                                return calcCap('Weapon2H') - calcCap('Weapon1H');
                             }
-                            else {
-                                return Math.round(ilvlModifier * baseParamModifier / 1000);
-                            }
+                            return calcCap(slot);
                         },
                     } as const);
 
@@ -176,6 +179,7 @@ export class NewApiDataManager implements DataManager {
     }
 
     itemById(id: number, forceNq: boolean = false): (GearItem | undefined) {
+        // @x-ts-expect-error - assumed that DataManager is not meaningfully used prior to loading data
         return this._allItems.find(item => {
             return item.id === id && item.isNqVersion === forceNq;
         });
@@ -185,10 +189,12 @@ export class NewApiDataManager implements DataManager {
         if (id < 0) {
             return undefined;
         }
+        // @x-ts-expect-error - assumed that DataManager is not meaningfully used prior to loading data
         return this._allMateria.find(item => item.id === id);
     }
 
     foodById(id: number) {
+        // @x-ts-expect-error - assumed that DataManager is not meaningfully used prior to loading data
         return this._allFoodItems.find(food => food.id === id);
     }
 
@@ -196,7 +202,7 @@ export class NewApiDataManager implements DataManager {
     async loadData() {
         const baseParamPromise = this.queryBaseParams().then(response => {
             checkResponse(response);
-            this._baseParams = response.data.items.reduce<{
+            this._baseParams = response.data.items!.reduce<{
                 [rawStat in RawStatKey]?: Record<OccGearSlotKey, number>
             }>((baseParams, value) => {
                 // Each individual item also gets converted
@@ -280,9 +286,9 @@ export class NewApiDataManager implements DataManager {
                 extraPromises.push(Promise.all([itemIlvlPromise, ilvlSyncPromise]).then(([native, sync]) => {
                     item.applyIlvlData(native, sync, this._level);
                     if (item.isCustomRelic) {
-                        console.debug('Applying relic model');
+                        // console.debug('Applying relic model');
                         item.relicStatModel = getRelicStatModelFor(item, this._baseParams, this._classJob);
-                        console.debug('Applied', item.relicStatModel);
+                        // console.debug('Applied', item.relicStatModel);
                     }
                 }));
             });

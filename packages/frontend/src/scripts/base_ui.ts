@@ -21,6 +21,9 @@ import {recordError} from "@xivgear/common-ui/analytics/analytics";
 import {isInIframe} from "@xivgear/common-ui/util/detect_iframe";
 import {WritableProps} from "@xivgear/common-ui/util/types";
 import {quickElement} from "@xivgear/common-ui/components/util";
+import {ACCOUNT_STATE_TRACKER} from "./account/account_state";
+import {SHEET_MANAGER} from "./components/saved_sheet_impl";
+import {USER_DATA_SYNCER} from "./account/user_data";
 
 declare global {
     interface Document {
@@ -74,7 +77,7 @@ export function hideWelcomeArea() {
     welcomeArea.style.display = 'none';
 }
 
-export function setMainContent(title: string, ...nodes: Parameters<ParentNode['replaceChildren']>) {
+export function setMainContent(title: string | undefined, ...nodes: Parameters<ParentNode['replaceChildren']>) {
     contentArea.replaceChildren(...nodes);
     setTitle(title);
 }
@@ -155,7 +158,7 @@ export function showLoadingScreen() {
 export function showNewSheetForm() {
     setPath('newsheet');
     const section = new NamedSection('New Gear Planning Sheet');
-    const form = new NewSheetForm(openSheet);
+    const form = new NewSheetForm(openSheet, SHEET_MANAGER, GRAPHICAL_SHEET_PROVIDER);
     section.contentArea.replaceChildren(form);
     setMainContent('New Sheet', section);
     form.takeFocus();
@@ -178,17 +181,46 @@ export function setTitle(titlePart: string | undefined) {
     }
 }
 
-export async function openSheetByKey(sheet: string) {
+export async function openSheetByKey(sheetKey: string) {
     setTitle('Loading Sheet');
-    console.log('openSheetByKey: ', sheet);
-    const planner = GRAPHICAL_SHEET_PROVIDER.fromSaved(sheet);
-    if (planner) {
-        recordSheetEvent("openSheetByKey", planner);
-        await openSheet(planner);
+    try {
+        console.log('openSheetByKey: ', sheetKey);
+        let sheet = SHEET_MANAGER.getByKey(sheetKey);
+        if (!sheet || sheet.syncStatus === 'never-downloaded') {
+            console.log(`Sheet status: ${sheet?.syncStatus ?? 'null'}, going to wait for login.`);
+            const token = await ACCOUNT_STATE_TRACKER.verifiedTokenPromise;
+            if (token) {
+                console.log('Got token, refreshing sheets');
+                await USER_DATA_SYNCER.prepSheetSync();
+                sheet = SHEET_MANAGER.getByKey(sheetKey);
+                if (sheet) {
+                    USER_DATA_SYNCER.syncOne(sheet);
+                }
+            }
+            else {
+                console.warn('Sheet does not exist, and no token available');
+                contentArea.replaceChildren(document.createTextNode("That sheet does not exist."));
+                setTitle('Error');
+            }
+        }
+        if (sheet) {
+            await sheet.readData();
+            const planner = GRAPHICAL_SHEET_PROVIDER.fromSaved(sheetKey);
+            if (planner) {
+                recordSheetEvent("openSheetByKey", planner);
+                await openSheet(planner);
+                return;
+            }
+        }
+        else {
+            contentArea.replaceChildren(document.createTextNode("That sheet does not exist."));
+            setTitle('Error');
+        }
     }
-    else {
-        contentArea.replaceChildren(document.createTextNode("That sheet does not exist."));
-        setTitle('Error');
+    catch (e) {
+        console.error(e);
+        recordError("openSheetByKey", e);
+        showFatalError("Error Loading Sheet!");
     }
 }
 
@@ -305,15 +337,35 @@ export async function openSheet(planner: GearPlanSheetGui, changeHash: boolean =
     await WORKER_POOL.setSheet(planner);
 }
 
+// TODO: good use case for custom events
+let currentPicker: SheetPickerTable | null = null;
+
+ACCOUNT_STATE_TRACKER.addAccountStateListener((tracker, stateNow, stateBefore) => {
+    if (currentPicker !== null && currentPicker.isConnected) {
+        for (const value of currentPicker.dataRowMap.values()) {
+            for (const col of value.dataColMap.values()) {
+                col.refreshFull();
+            }
+        }
+    }
+    if (stateNow && !stateBefore) {
+        SETTINGS.hideWelcomeMessage = true;
+        hideWelcomeArea();
+    }
+});
+
 export function showSheetPickerMenu() {
-    const picker = new SheetPickerTable();
+    const picker = new SheetPickerTable(SHEET_MANAGER, USER_DATA_SYNCER);
     const section = new NamedSection('My Sheets', false);
     section.classList.add('my-sheets-section');
     section.contentArea.replaceChildren(picker);
     // const holderDiv = quickElement('div', ['sheet-picker-holder'], [new SheetPickerTable()]);
     setMainContent(undefined, section);
-    // contentArea.replaceChildren(new SheetPickerTable());
-    // setTitle(undefined);
+    currentPicker = picker;
+    // If the user starts on this page, this will trigger before we have the token, i.e. no-op. Instead, the hook in
+    // account_components.ts:setupAccountUi() handles it. However, if the user navigates here afterwards, this will
+    // handle the refresh.
+    USER_DATA_SYNCER.triggerRefreshNow();
 }
 
 

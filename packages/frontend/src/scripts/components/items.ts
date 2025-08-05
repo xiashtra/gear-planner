@@ -269,6 +269,7 @@ export class FoodItemsTable extends CustomTable<FoodItem, TableSelectionModel<Fo
                     return item;
                 },
                 renderer: itemIconRenderer(),
+                fixedData: true,
             }),
             {
                 shortName: "itemname",
@@ -332,6 +333,8 @@ export class FoodItemsTable extends CustomTable<FoodItem, TableSelectionModel<Fo
         const oneStatFoodWithLabel = labeledCheckbox('Show Food with One Relevant Stat', osfCb);
         // This should not trigger the show/hide control
         oneStatFoodWithLabel.addEventListener('click', e => e.stopPropagation());
+        // Chrome has weird behavior, this is a workaround
+        osfCb.addEventListener('click', e => e.stopPropagation());
 
         const showHideRow = makeShowHideRow('Food', gearSet.isSlotCollapsed('food'), (val, count) => {
             gearSet.setSlotCollapsed('food', val);
@@ -380,6 +383,7 @@ export class FoodItemViewTable extends CustomTable<FoodItem> {
                     return item;
                 },
                 renderer: itemIconRenderer(),
+                fixedData: true,
             }),
             {
                 shortName: "itemname",
@@ -624,6 +628,7 @@ export class GearItemsTable extends CustomTable<GearSlotItem, TableSelectionMode
                     return item.item;
                 },
                 renderer: itemIconRenderer(),
+                fixedData: true,
             }),
             col({
                 shortName: "itemname",
@@ -932,6 +937,7 @@ export class GearItemsViewTable extends CustomTable<GearSlotItem> {
                     return item.item;
                 },
                 renderer: itemIconRenderer(),
+                fixedData: true,
             }),
             col({
                 shortName: "itemname",
@@ -951,7 +957,7 @@ export class GearItemsViewTable extends CustomTable<GearSlotItem> {
                     if (alts.length > 0) {
                         const altButton = makeActionButton(`+${alts.length} alt items`, () => {
                             const modal = new AltItemsModal(slotItem, alts);
-                            modal.attachAndShow();
+                            modal.attachAndShowExclusively();
                         });
                         altButton.classList.add('gear-items-view-alts-button');
                         colHeader.appendChild(altButton);

@@ -24,6 +24,36 @@ export interface AccountInfoResponse {
   accountInfo?: AccountInfo | null;
 }
 
+export interface ChangePasswordRequest {
+  existingPassword?: string;
+  /** @minLength 8 */
+  newPassword?: string;
+}
+
+export interface ChangePasswordResponse {
+  passwordCorrect?: boolean;
+}
+
+export interface FinalizePasswordResetRequest {
+  /**
+   * @format email
+   * @minLength 1
+   */
+  email: string;
+  /** @format int32 */
+  token?: number;
+  /** @minLength 8 */
+  newPassword?: string;
+}
+
+export interface InitiatePasswordResetRequest {
+  /**
+   * @format email
+   * @minLength 1
+   */
+  email: string;
+}
+
 export interface JwtResponse {
   token?: string;
 }
@@ -334,6 +364,25 @@ export class AccountServiceClient<
     /**
      * No description
      *
+     * @name ChangePassword
+     * @request POST:/account/changePassword
+     * @secure
+     * @response `200` `ChangePasswordResponse` changePassword 200 response
+     */
+    changePassword: (data: ChangePasswordRequest, params: RequestParams = {}) =>
+      this.request<ChangePasswordResponse, any>({
+        path: `/account/changePassword`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
      * @name CurrentAccount
      * @request GET:/account/current
      * @secure
@@ -351,6 +400,28 @@ export class AccountServiceClient<
     /**
      * No description
      *
+     * @name FinalizePasswordReset
+     * @request POST:/account/finalizePasswordReset
+     * @secure
+     * @response `200` `object` finalizePasswordReset 200 response
+     */
+    finalizePasswordReset: (
+      data: FinalizePasswordResetRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<object, any>({
+        path: `/account/finalizePasswordReset`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
      * @name AccountInfo
      * @request GET:/account/info
      * @secure
@@ -361,6 +432,28 @@ export class AccountServiceClient<
         path: `/account/info`,
         method: "GET",
         secure: true,
+        format: "json",
+        ...params,
+      }),
+
+    /**
+     * No description
+     *
+     * @name InitiatePasswordReset
+     * @request POST:/account/initiatePasswordReset
+     * @secure
+     * @response `200` `object` initiatePasswordReset 200 response
+     */
+    initiatePasswordReset: (
+      data: InitiatePasswordResetRequest,
+      params: RequestParams = {},
+    ) =>
+      this.request<object, any>({
+        path: `/account/initiatePasswordReset`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
         format: "json",
         ...params,
       }),
@@ -424,7 +517,7 @@ export class AccountServiceClient<
      * @name Register
      * @request POST:/account/register
      * @secure
-     * @response `200` `RegisterResponse` register 200 response
+     * @response `200` `RegisterResponse` Successful registration
      * @response `400` `ValidationErrorResponse` Validation error
      */
     register: (data: RegisterRequest, params: RequestParams = {}) =>
@@ -470,6 +563,38 @@ export class AccountServiceClient<
         secure: true,
         type: ContentType.Json,
         format: "json",
+        ...params,
+      }),
+  };
+  healthz = {
+    /**
+     * No description
+     *
+     * @name HealthCheck
+     * @summary Health Check
+     * @request GET:/healthz
+     * @response `200` `string` healthCheck 200 response
+     */
+    healthCheck: (params: RequestParams = {}) =>
+      this.request<string, any>({
+        path: `/healthz`,
+        method: "GET",
+        ...params,
+      }),
+  };
+  readyz = {
+    /**
+     * No description
+     *
+     * @name ReadyCheck
+     * @summary Ready Check
+     * @request GET:/readyz
+     * @response `200` `string` readyCheck 200 response
+     */
+    readyCheck: (params: RequestParams = {}) =>
+      this.request<string, any>({
+        path: `/readyz`,
+        method: "GET",
         ...params,
       }),
   };
