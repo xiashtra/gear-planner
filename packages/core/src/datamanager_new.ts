@@ -138,6 +138,12 @@ export class NewApiDataManager implements DataManager {
                                 case "weaponDelay":
                                     ilvlModifier = row.delay;
                                     break;
+                                case "defensePhys":
+                                    ilvlModifier = row.defense;
+                                    break;
+                                case "defenseMag":
+                                    ilvlModifier = row.magicDefense;
+                                    break;
                                 default:
                                     console.warn(`Bad ilvl modifer! ${statsKey}:${slot}`);
                                     ilvlModifier = undefined;
@@ -531,12 +537,14 @@ export class DataApiGearInfo implements GearItem {
         this.baseStats.wdPhys = forceNq ? data.damagePhys : data.damagePhysHQ;
         this.baseStats.wdMag = forceNq ? data.damageMag : data.damageMagHQ;
         this.baseStats.weaponDelay = weaponDelayRaw ? (weaponDelayRaw / 1000.0) : 0;
+        this.baseStats.defenseMag = forceNq ? data.defenseMag : data.defenseMagHQ;
+        this.baseStats.defensePhys = forceNq ? data.defensePhys : data.defensePhysHQ;
         const paramMap = forceNq ? data.baseParamMap : data.baseParamMapHQ;
         for (const key in paramMap) {
             const intKey = parseInt(key);
             const baseParam = statById(intKey);
-            // WD is already accounted for
-            if (baseParam === undefined || baseParam === 'wdPhys' || baseParam === 'wdMag' || baseParam === 'weaponDelay') {
+            // WD, delay, def are already accounted for
+            if (baseParam === undefined || baseParam === 'wdPhys' || baseParam === 'wdMag' || baseParam === 'weaponDelay' || baseParam === 'defenseMag' || baseParam === 'defensePhys') {
                 continue;
             }
             // We need to add here, because we don't want to overwrite wdPhys/wdMag/weaponDelay
@@ -668,14 +676,15 @@ export class DataApiGearInfo implements GearItem {
     }
 
     private computeSubstats() {
+        const baseStats = this.unsyncedVersion?.baseStats ?? this.baseStats;
         const sortedStats = Object.entries({
-            crit: this.baseStats.crit,
-            dhit: this.baseStats.dhit,
-            determination: this.baseStats.determination,
-            spellspeed: this.baseStats.spellspeed,
-            skillspeed: this.baseStats.skillspeed,
-            piety: this.baseStats.piety,
-            tenacity: this.baseStats.tenacity,
+            crit: baseStats.crit,
+            dhit: baseStats.dhit,
+            determination: baseStats.determination,
+            spellspeed: baseStats.spellspeed,
+            skillspeed: baseStats.skillspeed,
+            piety: baseStats.piety,
+            tenacity: baseStats.tenacity,
         })
             .sort((left, right) => {
                 if (left[1] > right[1]) {

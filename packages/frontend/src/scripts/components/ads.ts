@@ -40,7 +40,7 @@ declare global {
     }
 }
 
-const X_PADDING = 20;
+const X_PADDING = 10;
 const Y_PADDING = 50;
 
 /**
@@ -233,6 +233,8 @@ window.addEventListener('resize', recheckAds);
 
 window.currentAds = currentAds;
 
+let lastReported: ManagedAd[] | null = null;
+
 function recheckAds() {
     setTimeout(() => {
 
@@ -249,6 +251,17 @@ function recheckAds() {
             });
             window.__cmp?.('addConsentLink');
             window.__uspapi?.('addLink', 1);
+            const showing = currentAds.filter(ad => ad.showing);
+            // Debounce this reporting so it doesn't spam hundreds of events when resizing a window
+            if (!arrayEq(showing, lastReported)) {
+                if (showing.length > 0) {
+                    recordEvent('shownAds', {shownAds: showing.map(ad => ad.id).join(","), count: showing.length});
+                }
+                else {
+                    recordEvent('shownAds', {shownAds: 'none', count: 0});
+                }
+                lastReported = showing;
+            }
         }
         else {
             console.debug('recheckAds: not enabled');

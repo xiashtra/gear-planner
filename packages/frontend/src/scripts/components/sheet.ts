@@ -76,7 +76,7 @@ import {SimCurrentResult, SimResult, SimSettings, SimSpec, Simulation} from "@xi
 import {getRegisteredSimSpecs} from "@xivgear/core/sims/sim_registry";
 import {makeUrl, NavState, ONLY_SET_QUERY_PARAM} from "@xivgear/core/nav/common_nav";
 import {simMaintainersInfoElement} from "./sims";
-import {SaveAsModal} from "./new_sheet_form";
+import {ChangePropsModal, SaveAsModal} from "./new_sheet_form";
 import {DropdownActionMenu} from "./dropdown_actions_menu";
 import {CustomFoodPopup, CustomItemPopup} from "./custom_item_manager";
 import {confirmDelete} from "@xivgear/common-ui/components/delete_confirm";
@@ -919,7 +919,7 @@ export class GearSetEditor extends HTMLElement {
             });
 
         const leftSideSlots = ['Head', 'Body', 'Hand', 'Legs', 'Feet'] as const;
-        const rightSideSlots = ['Ears', 'Neck', 'Wrist', 'RingLeft', 'RingRight'] as const;
+        const rightSideSlots = ['Ears', 'Neck', 'Wrist', 'RingRight', 'RingLeft'] as const;
 
         const showHideAllCallback = () => {
             this.gearTables.forEach(tbl => tbl.recheckHiddenSlots());
@@ -1094,7 +1094,7 @@ export class GearSetViewer extends HTMLElement {
             headingLink.addEventListener('click', () => {
                 recordSheetEvent("openEmbedToFull", this.sheet);
             });
-            headingLink.replaceChildren(this.gearSet.name, faIcon('fa-arrow-up-right-from-square', 'fa'));
+            headingLink.replaceChildren(this.gearSet.name);
             heading.replaceChildren(headingLink);
         }
         else {
@@ -1111,27 +1111,12 @@ export class GearSetViewer extends HTMLElement {
         anchorForEmbed.id = 'embed-stats-placeholder';
         this.appendChild(anchorForEmbed);
 
-        const matTotals = new MateriaTotalsDisplay(this.gearSet);
-        if (!matTotals.empty) {
-            this.appendChild(matTotals);
+        if (!this.sheet.isEmbed) {
+            const matTotals = new MateriaTotalsDisplay(this.gearSet);
+            if (!matTotals.empty) {
+                this.appendChild(matTotals);
+            }
         }
-
-        // const buttonArea = quickElement('div', ['gear-set-editor-button-area', 'button-row'], [
-        //     makeActionButton('Switch to Edit Mode', () => {
-        //         alert('Not Implemented Yet');
-        //     }),
-        //     // TODO
-        //     makeActionButton('Copy Link to Set', () => {
-        //         alert('Not Implemented Yet');
-        //         // startShortLink(JSON.stringify(this.sheet.exportGearSet(this.gearSet, true)));
-        //     }),
-        //     makeActionButton('Copy Set as JSON', () => {
-        //         alert('Not Implemented Yet');
-        //         // navigator.clipboard.writeText(JSON.stringify(this.sheet.exportGearSet(this.gearSet, true)));
-        //     })
-        // ]);
-        //
-        // this.appendChild(buttonArea);
 
         // We only care about equipped items
         const itemMapping: Map<EquipSlotKey, GearItem> = new Map();
@@ -1145,7 +1130,7 @@ export class GearSetViewer extends HTMLElement {
         }
 
         const leftSideSlots = ['Head', 'Body', 'Hand', 'Legs', 'Feet'] as const;
-        const rightSideSlots = ['Ears', 'Neck', 'Wrist', 'RingLeft', 'RingRight'] as const;
+        const rightSideSlots = ['Ears', 'Neck', 'Wrist', 'RingRight', 'RingLeft'] as const;
 
         if (itemMapping.get('Weapon') || itemMapping.get('OffHand')) {
             const weaponTable = new GearItemsViewTable(this.sheet, this.gearSet, itemMapping, this.gearSet.classJobStats.offhand ? ['Weapon', 'OffHand'] : ['Weapon']);
@@ -1171,8 +1156,6 @@ export class GearSetViewer extends HTMLElement {
                 rightEnabled = true;
             }
         }
-        // const leftSideTable = new GearItemsTable(this.sheet, this.gearSet, itemMapping, ['Head', 'Body', 'Hand', 'Legs', 'Feet']);
-        // const rightSideTable = new GearItemsTable(this.sheet, this.gearSet, itemMapping, ['Ears', 'Neck', 'Wrist', 'RingLeft', 'RingRight']);
 
         const gearTableSet = document.createElement('div');
         gearTableSet.classList.add('gear-table-sides-holder');
@@ -1494,10 +1477,11 @@ export class GearPlanSheetGui extends GearPlanSheet {
 
         const siFmt = formatSyncInfo(this.syncInfo, this.level);
         if (siFmt !== null) {
-            const span = quickElement('span', [], [siFmt]);
-            const ilvlSyncLabel = quickElement('div', ['like-a-button', 'level-sync-info'], [span]);
-            ilvlSyncLabel.title = 'To change the item level sync, click the "Save As" button to create a new sheet with a different level/ilvl.';
-            buttonsArea.appendChild(ilvlSyncLabel);
+            const ilvlSyncBtn = makeActionButton(siFmt, () => {
+                const modal = new ChangePropsModal(this);
+                modal.attachAndShowExclusively();
+            });
+            buttonsArea.appendChild(ilvlSyncBtn);
         }
 
         if (!this.isViewOnly) {
@@ -1549,12 +1533,22 @@ export class GearPlanSheetGui extends GearPlanSheet {
         }
         else {
             sheetOptions.addAction({
-                label: 'Save As',
+                label: 'Save As...',
                 action: () => {
                     const modal = new SaveAsModal(this, newSheet => openSheetByKey(newSheet.saveKey));
                     modal.attachAndShowExclusively();
                 },
             });
+            if (this.saveKey) {
+                sheetOptions.addAction({
+                    label: 'Change Level/Job/Sync',
+                    action: () => {
+                        const modal = new ChangePropsModal(this);
+                        modal.attachAndShowExclusively();
+                    },
+                });
+
+            }
         }
 
         if (!this.isViewOnly) {
@@ -2167,6 +2161,14 @@ export class GearPlanSheetGui extends GearPlanSheet {
     set activeSpecialStat(value: SpecialStatType | null) {
         super.activeSpecialStat = value;
         this.resetEditorArea();
+    }
+
+    showChangePropertiesDialog(): void {
+        if (!this.saveKey) {
+            alert('You must save this sheet before changing its properties. Use "Save As" first.');
+            return;
+        }
+        new ChangePropsModal(this).attachAndShowExclusively();
     }
 }
 
