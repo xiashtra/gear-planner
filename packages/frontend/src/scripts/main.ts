@@ -1,3 +1,4 @@
+import '@ungap/custom-elements';
 import {processHashLegacy, processNav} from "./nav_hash";
 import {earlyUiSetup, initialLoad, initTopMenu} from "./base_ui";
 import {installFallbackPrivacyArea} from "./components/general/ads";
@@ -7,12 +8,20 @@ import {setupAccountUi} from "./account/components/account_components";
 import {setupUserDataSync} from "./account/user_data";
 import {startSizeAnalytics} from "./analytics/analytics_helpers";
 import {ASYNC_SIM_LOADER} from "./sims/asyncloader/async_loader";
-import '@ungap/custom-elements';
+import {installImageFallbackHelper} from "./util/image_fallback_helper";
+
+declare global {
+    interface Window {
+        xivgearLoadStarted?: boolean;
+    }
+}
+
+window.xivgearLoadStarted = true;
 
 // Main entry point for actual browsers
 document.addEventListener("DOMContentLoaded", () => {
     // Sim configuration
-    // Just kick off the async loading
+    // Just kick off the async loading - don't wait
     ASYNC_SIM_LOADER.load();
 
     // Early UI stuff
@@ -27,6 +36,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Stop double click selection
     installDoubleClickHandler();
+    // Xivapi to fallback image helper
+    installImageFallbackHelper();
     // Initial page load behavior
     initialLoad();
 

@@ -60,7 +60,7 @@ import {ChangePropsModal, SaveAsModal} from "../sheetpicker/new_sheet_form";
 import {DropdownActionMenu} from "../general/dropdown_actions_menu";
 import {CustomFoodPopup, CustomItemPopup} from "./custom_item_manager";
 import {confirmDelete} from "@xivgear/common-ui/components/delete_confirm";
-import {SimulationGui} from "../../sims/simulation_gui";
+import {SimSettingsUpdateCallback, SimulationGui} from "../../sims/simulation_gui";
 import {makeGui} from "../../sims/registration/sim_guis";
 import {MeldSolverDialog} from "./editor/meld_solver_modal";
 import {insertAds} from "../general/ads";
@@ -89,6 +89,7 @@ import {stringToParagraphs, textWithToolTip} from "../../util/text_utils";
 import {GearSetEditor} from "./editor/set_editor";
 import {DataManager} from "@xivgear/core/datamanager";
 import {ASYNC_SIM_LOADER} from "../../sims/asyncloader/async_loader";
+import {HEALER_MP_SIM_STUB_NAME} from "@xivgear/core/sims/healer/healer_mp_consts";
 
 const noSeparators = (set: CharacterGearSet) => !set.isSeparator;
 
@@ -372,10 +373,10 @@ class GearPlanTable extends CustomTable<CharacterGearSet, SingleCellRowOrHeaderS
                 allowCellSelection: true,
                 // TODO: make this not display if the sim has no settings
                 headerStyler: (value, colHeader) => {
-                    const span = document.createElement('span');
-                    span.textContent = '⛭';
-                    span.classList.add('header-cell-detail', 'header-cell-gear');
-                    colHeader.firstElementChild?.appendChild(span);
+                    if (!colHeader.querySelector('.header-cell-gear')) {
+                        const span = el('span', {classes: ['header-cell-detail', 'header-cell-gear']}, ['⛭']);
+                        colHeader.firstElementChild?.appendChild(span);
+                    }
                     // colHeader.append(span);
                     colHeader.classList.add('hoverable');
                     colHeader.title = 'Click to configure simulation settings';
@@ -697,30 +698,60 @@ class GearPlanTable extends CustomTable<CharacterGearSet, SingleCellRowOrHeaderS
                 return;
             }
             for (const [cell, value] of processed) {
-                cell.classList.add('sim-column-valid');
-                const fivePercentWorse = 0.95;
-                // This value represents the percent worse this value is, e.g. 0.985 for 98.5% as good.
-                const percentWorseComparedToBest = value / bestValue;
-                // e.g. 2.5 if our value was 0.975
-                const numberToBeProcessed = 100 * (percentWorseComparedToBest - fivePercentWorse);
-
-                // This is five percent or more worse than the best rating. Give it the worst rating we can.
-                if (numberToBeProcessed <= 0) {
-                    cell.style.setProperty('--sim-result-relative', '0%');
-                    cell.classList.add('sim-column-worst');
+                // Special case for MP Sim: this isn't a normal sim and we want to show
+                // positive values as good and negative values as kinda bad relative to
+                // a 'good' or 'bad' number, instead of comparing them directly.
+                if (sim.sim.spec.stub === HEALER_MP_SIM_STUB_NAME) {
+                    cell.classList.add('sim-column-valid');
+                    if (value >= 0) {
+                        // We do positives relative to 750 MP/Min, so 750 MP or higher will show the brightest greens
+                        const bestCaseMpPerMinute = 750;
+                        const percentWorseComparedToBest = (value / bestCaseMpPerMinute) * 100;
+                        const percentDividedBy2 = percentWorseComparedToBest / 2;
+                        const percentage = percentDividedBy2 + 50;
+                        const finalPercentage = percentage > 100 ? 100 : percentage;
+                        cell.style.setProperty('--sim-result-relative', finalPercentage.toFixed(1) + '%');
+                        if (value === bestValue) {
+                            cell.classList.add('sim-column-best');
+                        }
+                    }
+                    else {
+                        // We do negatives relative to -500 MP/Min, so -500 MP or lower will show the darkest reds
+                        const worstCaseMpPerMinute = 500;
+                        const percentWorse = (Math.abs(value) / worstCaseMpPerMinute) * 100;
+                        const percentDividedBy2 = percentWorse / 2;
+                        const percentage = 50 - percentDividedBy2;
+                        const finalPercentage = percentage < 0 ? 0 : percentage;
+                        cell.style.setProperty('--sim-result-relative', finalPercentage.toFixed(1) + '%');
+                    }
                 }
                 else {
-                    // Log base 1.017 on our number -- which makes anything just below five or above be considered worst gradient.
-                    // We use a logarithmic scale so that the percentage gets less favourable the further away from the best it is.
-                    const percentageScore = Math.log(numberToBeProcessed + 1) / Math.log(1.018);
-                    const adjustedPercentageScore = Math.min(Math.max(percentageScore, 0), 100);
-                    cell.style.setProperty('--sim-result-relative', adjustedPercentageScore.toFixed(1) + '%');
-                    if (value === bestValue) {
-                        cell.style.setProperty('--sim-result-relative', '100%');
-                        cell.classList.add('sim-column-best');
+                    cell.classList.add('sim-column-valid');
+                    const fivePercentWorse = 0.95;
+                    // This value represents the percent worse this value is, e.g. 0.985 for 98.5% as good.
+                    const percentWorseComparedToBest = value / bestValue;
+                    // e.g. 2.5 if our value was 0.975
+                    const numberToBeProcessed = 100 * (percentWorseComparedToBest - fivePercentWorse);
+
+                    // This is five percent or more worse than the best rating. Give it the worst rating we can.
+                    if (numberToBeProcessed <= 0) {
+                        cell.style.setProperty('--sim-result-relative', '0%');
+                        cell.classList.add('sim-column-worst');
+                    }
+                    else {
+                        // Log base 1.017 on our number -- which makes anything just below five or above be considered worst gradient.
+                        // We use a logarithmic scale so that the percentage gets less favourable the further away from the best it is.
+                        const percentageScore = Math.log(numberToBeProcessed + 1) / Math.log(1.018);
+                        const adjustedPercentageScore = Math.min(Math.max(percentageScore, 0), 100);
+                        cell.style.setProperty('--sim-result-relative', adjustedPercentageScore.toFixed(1) + '%');
+                        if (value === bestValue) {
+                            cell.style.setProperty('--sim-result-relative', '100%');
+                            cell.classList.add('sim-column-best');
+                        }
                     }
                 }
             }
+
         }
     }
 }
@@ -914,14 +945,17 @@ function formatSimulationConfigArea<SettingsType extends SimSettings>(
         const rerunButton = makeActionButton("Rerun", rerunAction);
         outerDiv.appendChild(rerunButton);
     }
-    const rerunTimer = new Inactivitytimer(300, rerunAction);
+    // Specific sub-UIs can make their own proxy with a shorter debounce time, e.g. buff settings.
+    // This one is meant to be longer since it acts as a catch-all for operations that either
+    // don't want to override, or forgot to.
+    const rerunTimer = new Inactivitytimer(800, rerunAction);
 
     const originalSettings: SettingsType = simGui.sim.settings;
-    const updateCallback = () => {
+    const updateCallback: SimSettingsUpdateCallback = (msOverride: number | null = null) => {
         simGui.sim.settingsChanged();
         sheet.requestSave();
         if (auto) {
-            rerunTimer.ping();
+            rerunTimer.ping(msOverride);
         }
     };
     const settingsProxy = writeProxy(originalSettings, () => {

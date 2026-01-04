@@ -387,7 +387,7 @@ export class CharacterGearSet {
         }
         this.invalidate();
         this.equipment[slot] = this.toEquippedItem(item);
-        console.log(`Set ${this.name}: slot ${slot} => ${item?.name}`);
+        // console.debug(`Set ${this.name}: slot ${slot} => ${item?.name}`);
         if (materiaAutoFillController) {
             const mode = materiaAutoFillController.autoFillMode;
             if (mode === 'leave_empty') {
@@ -1195,6 +1195,40 @@ export class CharacterGearSet {
             }
         }
         return values.reduce((a, b) => a + b) / values.length;
+    }
+
+    /**
+     * Get items that could replace the given item - either identical or better.
+     *
+     * @param thisItem
+     */
+    getAltItemsFor(thisItem: GearItem): GearItem[] {
+        // Ignore this for relics - consider them to be incompatible until we can
+        // figure out a good way to do this.
+        if (thisItem.isCustomRelic) {
+            return [];
+        }
+        return this.sheet.allItems.filter(otherItem => {
+            // Cannot be the same item
+            if (!(otherItem.id !== thisItem.id
+                // Must be same slot
+                && otherItem.occGearSlotName === thisItem.occGearSlotName
+                // Must be better or same stats
+                && isSameOrBetterItem(otherItem, thisItem)
+                // Only allow items up to current max level for this job
+                && otherItem.equipLvl <= this.classJobStats.maxLevel)) {
+                return false;
+            }
+            // For unique rings specifically, we need to check if the player already has that ring equipped in the
+            // other slot, since you would not be able to equip it into both slots.
+            if (otherItem.isUnique && otherItem.displayGearSlotName === 'Ring') {
+                if (this.equipment['RingLeft']?.gearItem.id === otherItem.id
+                    || this.equipment['RingRight']?.gearItem.id === otherItem.id) {
+                    return false;
+                }
+            }
+            return true;
+        });
     }
 }
 

@@ -981,7 +981,7 @@ export class GearItemsViewTable extends CustomTable<GearSlotItem> {
                     slotId: slotId,
                     // alts: sheet.getAltItemsFor(equippedItem)
                 };
-                const alts: ReturnType<typeof sheet.getAltItemsFor> = sheet.getAltItemsFor(equippedItem);
+                const alts: ReturnType<typeof gearSet.getAltItemsFor> = gearSet.getAltItemsFor(equippedItem);
                 data.push(new GearViewHeaderSpec(equippedItem, slot, alts, sheet));
                 data.push(item);
                 if (!equippedItem.isCustomRelic) {
@@ -1045,8 +1045,6 @@ export class GearItemsViewTable extends CustomTable<GearSlotItem> {
                 },
                 renderer: (itemName, item) => {
                     return quickElement('div', ['item-name-holder'], [quickElement('span', ['item-name'], [shortenItemName(itemName)])]);
-                },
-                headerStyler: (_, colHeader, headerRow) => {
                 },
                 // initialWidth: 300,
             }),
