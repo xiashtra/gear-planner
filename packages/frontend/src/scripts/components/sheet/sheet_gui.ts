@@ -89,7 +89,7 @@ import {stringToParagraphs, textWithToolTip} from "../../util/text_utils";
 import {GearSetEditor} from "./editor/set_editor";
 import {DataManager} from "@xivgear/core/datamanager";
 import {ASYNC_SIM_LOADER} from "../../sims/asyncloader/async_loader";
-import {HEALER_MP_SIM_STUB_NAME} from "@xivgear/core/sims/healer/healer_mp_consts";
+import {HEALER_MP_SIM_STUB_NAME} from "@xivgear/sims/healer/healer_mp_consts";
 
 const noSeparators = (set: CharacterGearSet) => !set.isSeparator;
 
@@ -190,7 +190,7 @@ class SimResultData<ResultType extends SimResult> {
 /**
  * A table of gear sets
  */
-class GearPlanTable extends CustomTable<CharacterGearSet, SingleCellRowOrHeaderSelectionModel<CharacterGearSet, SimCurrentResult, SimulationGui<any, any, any>>> {
+export class GearPlanTable extends CustomTable<CharacterGearSet, SingleCellRowOrHeaderSelectionModel<CharacterGearSet, SimCurrentResult, SimulationGui<any, any, any>>> {
 
     private readonly sheet: GearPlanSheetGui;
 

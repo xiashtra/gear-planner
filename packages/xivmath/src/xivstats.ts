@@ -22,7 +22,8 @@ import {
     detDmg,
     dhitChance,
     dhitDmg,
-    fl, flp,
+    fl,
+    flp,
     mainStatMulti,
     mpTick,
     sksTickMulti,
@@ -152,14 +153,14 @@ export function statsSerializationProxy(stats: ComputedSetStats): ComputedSetSta
             return Array.from(keys);
         },
         getOwnPropertyDescriptor(target, prop) {
-            const descriptor = Object.getOwnPropertyDescriptor(target, prop) ||
-                Object.getOwnPropertyDescriptor(Object.getPrototypeOf(target), prop);
+            const descriptor = Object.getOwnPropertyDescriptor(target, prop)
+                || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(target), prop);
 
             if (
-                descriptor &&
-                typeof descriptor.get === 'function' &&
-                typeof prop === 'string' &&
-                !prop.startsWith('_')
+                descriptor
+                && typeof descriptor.get === 'function'
+                && typeof prop === 'string'
+                && !prop.startsWith('_')
             ) {
                 return {
                     enumerable: true,
@@ -175,7 +176,7 @@ export function statsSerializationProxy(stats: ComputedSetStats): ComputedSetSta
  * ComputedSetStats implementation.
  *
  * Unlike the old ComputedSetStats, this should not be modified. Rather, if a modified version is required,
- * then the {@link #withModifications()} method should be used, which will apply the allowable modifications and
+ * then the {@link withModifications()} method should be used, which will apply the allowable modifications and
  * return a new object. Derived values do not need to be explicitly recomputed, e.g. if you apply a main stat bonus,
  * the main stat multiplier will take effect automatically.
  */
@@ -473,6 +474,16 @@ export class ComputedSetStatsImpl implements ComputedSetStats {
     get effectiveFoodBonuses(): RawStats {
         return this._effectiveFoodBonuses;
     }
+
+    get extraMainStat(): 0 {
+        // Always 0 at this point because the extra main stat is already factored into the actual main stat.
+        return 0;
+    }
+
+    get extraSecondaryStat(): 0 {
+        // Always 0 at this point because the extra secondary stat is already factored into the actual secondary stat.
+        return 0;
+    }
 }
 
 export function finalizeStats(
@@ -506,7 +517,10 @@ export function finalizeStatsInt(
 } {
     const combinedStats: RawStats = {...gearStats};
     const mainStatKey = classJobStats.mainStat;
+    const secondaryStatKey = classJobStats.secondaryStat;
     const aaStatKey = classJobStats.autoAttackStat;
+    combinedStats[mainStatKey] += gearStats.extraMainStat;
+    combinedStats[secondaryStatKey] += gearStats.extraSecondaryStat;
     combinedStats[mainStatKey] = fl(combinedStats[mainStatKey] * (1 + 0.01 * partyBonus));
     if (mainStatKey !== aaStatKey) {
         combinedStats[aaStatKey] = fl(combinedStats[aaStatKey] * (1 + 0.01 * partyBonus));
