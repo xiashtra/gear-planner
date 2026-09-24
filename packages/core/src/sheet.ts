@@ -1,11 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // TODO: get back to fixing this at some point
 import {
-    ALL_COMBAT_JOBS,
-    ALL_SUB_STATS,
+    ALL_COMBAT_STATS,
+    ALL_COMBAT_SUB_STATS,
+    ALL_JOBS,
     CURRENT_MAX_LEVEL,
     defaultItemDisplaySettings,
     DefaultMateriaFillPrio,
+    DOH_STATS,
+    DOL_STATS,
     getClassJobStats,
     getDefaultDisplaySettings,
     getRaceStats,
@@ -13,6 +16,7 @@ import {
     JobName,
     LEVEL_ITEMS,
     MAIN_STATS,
+    DEFAULT_MATERIA_ACCEPTABLE_OVERCAP_LOSS,
     MateriaSubstat,
     RaceName,
     SPECIAL_STAT_KEYS,
@@ -21,6 +25,8 @@ import {
     SupportedLevel
 } from "@xivgear/xivmath/xivconstants";
 import {
+    ComputedSetStats,
+    ComputedSetStatsExport,
     DisplayGearSlotKey,
     EquippedItem,
     EquipSlotKey,
@@ -32,10 +38,14 @@ import {
     ItemSlotExport,
     JobData,
     JobDataConst,
+    JobDataExport,
     Materia,
+    MedicineItem,
     MateriaAutoFillController,
     MateriaAutoFillPrio,
     MateriaFillMode,
+    MateriaSlot,
+    MateriaWasteLimits,
     MeldableMateriaSlot,
     NormalOccGearSlotKey,
     OccGearSlotKey,
@@ -58,7 +68,6 @@ import {getDefaultSims, getRegisteredSimSpecs, getSimSpecByStub} from "./sims/si
 import {DUMMY_SHEET_MGR, SheetManager} from "./persistence/saved_sheets";
 import {CustomItem} from "./customgear/custom_item";
 import {CustomFood} from "./customgear/custom_food";
-import {statsSerializationProxy} from "@xivgear/xivmath/xivstats";
 import {isMateriaAllowed, materiaShortLabel} from "./materia/materia_utils";
 import {inflateSetExport} from "./util/sheet_utils";
 import {SpecialStatType} from "@xivgear/data-api-client/dataapi";
@@ -123,11 +132,12 @@ export class SheetProvider<SheetType extends GearPlanSheet> {
      * @param multiJob Whether to create a multi-job sheet.
      */
     fromScratch(sheetKey: string, sheetName: string, classJob: JobName, level: SupportedLevel, ilvlSync: number | undefined, multiJob: boolean): SheetType {
+        const defaultPartyBonus: PartyBonusAmount = JOB_DATA[classJob]?.defaultPartyBonus ?? 5;
         const fakeExport: SheetExport = {
             job: classJob,
             level: level,
             name: sheetName,
-            partyBonus: classJob === 'BLU' ? 1 : 5,
+            partyBonus: defaultPartyBonus,
             race: undefined,
             saveKey: sheetKey,
             sets: [{
@@ -181,7 +191,7 @@ export class GearPlanSheet {
     private _partyBonus: PartyBonusAmount;
     private readonly _saveKey: string | undefined;
     private readonly _importedData: SheetExport;
-    shouldAddDefaultSimsToNewSheet: boolean;
+    shouldAddDefaultSimsToNewSheet: boolean = false;
 
     // Sheet data
     private _sets: CharacterGearSet[] = [];
@@ -223,6 +233,9 @@ export class GearPlanSheet {
 
     protected sheetManager: SheetManager;
 
+    // Set of item IDs which are hidden
+    private hiddenItems: Set<number> = new Set<number>();
+
     // Can't make ctor private for custom element, but DO NOT call this directly - use fromSaved or fromScratch
     constructor(sheetKey: string | undefined, importedData: SheetExport, manager: SheetManager) {
         console.log(importedData);
@@ -238,23 +251,36 @@ export class GearPlanSheet {
         this.isMultiJob = importedData.isMultiJob ?? false;
         this._activeSpecialStat = (importedData.specialStats ?? null) as SpecialStatType | null;
         this.altJobs = this.isMultiJob ? [
-            ...ALL_COMBAT_JOBS.filter(job => JOB_DATA[job].role === JOB_DATA[this.classJobName].role
-                // Don't include the primary job in the list of alt jobs
-                && job !== this.classJobName),
+            ...ALL_JOBS.filter(job => {
+                const thatJobData = JOB_DATA[job];
+                const thisJobData = JOB_DATA[this.classJobName];
+                return thatJobData.type === thisJobData.type && thatJobData.combatRole === thisJobData.combatRole
+                    // Don't include the primary job in the list of alt jobs
+                    && job !== this.classJobName;
+            }),
         ] : [];
         this.ilvlSync = importedData.ilvlSync;
         this._description = importedData.description;
+        const defaults = getDefaultDisplaySettings(this.level, this.classJobName, this.ilvlSync);
         if (importedData.itemDisplaySettings) {
             Object.assign(this._itemDisplaySettings, importedData.itemDisplaySettings);
         }
         else {
-            const defaults = getDefaultDisplaySettings(this.level, this.classJobName, this.ilvlSync);
             Object.assign(this._itemDisplaySettings, defaults);
         }
+        if (importedData.hiddenItems) {
+            importedData.hiddenItems.forEach(itemId => this.hiddenItems.add(itemId));
+        }
+        else {
+            // if the import does not include hidden item info, reset this to the default.
+            this._itemDisplaySettings.showHidden = defaults.showHidden;
+        }
+        const maxWaste: MateriaWasteLimits = {...(importedData.mfMaxWaste ?? {})};
         this.materiaAutoFillPrio = {
             statPrio: importedData.mfp ?? [...DefaultMateriaFillPrio.filter(stat => this.isStatRelevant(stat))],
             // Just picking a bogus value so the user understands what it is
             minGcd: importedData.mfMinGcd ?? 2.05,
+            maxWaste: maxWaste,
         };
         this.materiaFillMode = importedData.mfm ?? 'retain_item';
 
@@ -399,6 +425,13 @@ export class GearPlanSheet {
             return mat.materiaGrade <= lvlItemInfo.maxMateria
                 // && mat.materiaGrade >= lvlItemInfo.minMateria
                 && this.isStatRelevant(mat.primaryStat);
+        });
+        this._relevantMateria.forEach(mat => {
+            const stat = mat.primaryStat;
+            if (stat in this.materiaAutoFillPrio.maxWaste) {
+                return;
+            }
+            this.materiaAutoFillPrio.maxWaste[stat] = DEFAULT_MATERIA_ACCEPTABLE_OVERCAP_LOSS;
         });
         this.recheckCustomItems();
         for (const importedSet of saved.sets) {
@@ -572,6 +605,7 @@ export class GearPlanSheet {
             mfm: this.materiaFillMode,
             mfp: this.materiaAutoFillPrio.statPrio,
             mfMinGcd: this.materiaAutoFillPrio.minGcd,
+            mfMaxWaste: this.materiaAutoFillPrio.maxWaste,
             ilvlSync: this.ilvlSync,
             description: this.description,
             customItems: this._customItems.map(ci => ci.export()),
@@ -582,6 +616,9 @@ export class GearPlanSheet {
         };
         if (opts.includeSaveKey) {
             out.saveKey = this._saveKey;
+        }
+        if (opts.includeItemFlags) {
+            out.hiddenItems = Array.from(this.hiddenItems);
         }
         // @ts-expect-error Don't know how to make it work - the only issue is that 'sets' is the wrong type.
         return out;
@@ -713,6 +750,7 @@ export class GearPlanSheet {
             name: set.name,
             items: items,
             food: set.food ? set.food.id : undefined,
+            medicine: set.medicine ? set.medicine.id : undefined,
             description: set.description,
             isSeparator: set.isSeparator,
         };
@@ -772,6 +810,15 @@ export class GearPlanSheet {
         else {
             return this.dataManager.foodById(id);
         }
+    }
+
+    /**
+     * Return a medicine item from the DataManager by its ID. Returns undefined if the item could not be found.
+     *
+     * @param id
+     */
+    medicineById(id: number): MedicineItem | undefined {
+        return this.dataManager.medicineById(id);
     }
 
     /**
@@ -992,6 +1039,9 @@ export class GearPlanSheet {
             if (importedSet.food) {
                 set.food = this.foodById(importedSet.food);
             }
+            if (importedSet.medicine) {
+                set.medicine = this.medicineById(importedSet.medicine);
+            }
             if (importedSet.relicStatMemory) {
                 set.relicStatMemory.import(importedSet.relicStatMemory);
             }
@@ -1055,7 +1105,7 @@ export class GearPlanSheet {
         return this.statsForJob(this.classJobName);
     }
 
-    private get classJobEarlyStats(): JobDataConst {
+    get classJobEarlyStats(): JobDataConst {
         return getClassJobStats(this.classJobName);
     }
 
@@ -1091,18 +1141,28 @@ export class GearPlanSheet {
             // Not sure what the best way to handle this is
             return true;
         }
-        if (MAIN_STATS.includes(stat as typeof MAIN_STATS[number])) {
-            return (stat === this.classJobEarlyStats.mainStat);
-        }
-        if (stat === 'gearHaste') {
-            const specialStat = this.activeSpecialStat;
-            return SPECIAL_STATS_MAPPING[specialStat]?.showHaste ?? false;
-        }
-        if (this.classJobEarlyStats.irrelevantSubstats) {
-            return !this.classJobEarlyStats.irrelevantSubstats.includes(stat as Substat);
-        }
-        else {
-            return true;
+        switch (this.classJobEarlyStats.type) {
+            case "Combat":
+                if (DOH_STATS.includes(stat as typeof DOH_STATS[number]) || DOL_STATS.includes(stat as typeof DOL_STATS[number])) {
+                    return false;
+                }
+                if (MAIN_STATS.includes(stat as typeof MAIN_STATS[number])) {
+                    return (stat === this.classJobEarlyStats.mainStat);
+                }
+                if (stat === 'gearHaste') {
+                    const specialStat = this.activeSpecialStat;
+                    return SPECIAL_STATS_MAPPING[specialStat]?.showHaste ?? false;
+                }
+                if (this.classJobEarlyStats.irrelevantSubstats) {
+                    return !this.classJobEarlyStats.irrelevantSubstats.includes(stat as Substat);
+                }
+                else {
+                    return ALL_COMBAT_STATS.includes(stat as typeof ALL_COMBAT_STATS[number]);
+                }
+            case "DoH":
+                return DOH_STATS.includes(stat as typeof DOH_STATS[number]);
+            case "DoL":
+                return DOL_STATS.includes(stat as typeof DOL_STATS[number]);
         }
     }
 
@@ -1113,7 +1173,7 @@ export class GearPlanSheet {
      * @param stat
      */
     isStatPossibleOnGear(stat: RawStatKey | undefined): boolean {
-        const role = this.classJobEarlyStats.role;
+        const role = this.classJobEarlyStats.combatRole;
         if (stat === 'vitality') {
             return true;
         }
@@ -1214,9 +1274,13 @@ export class GearPlanSheet {
      * in the slot.
      *
      * @param slot
+     * @param filterByGrade
      */
-    getRelevantMateriaFor(slot: MeldableMateriaSlot) {
-        const materia = this._relevantMateria.filter(mat => mat.ilvl <= slot.materiaSlot.ilvl);
+    getRelevantMateriaFor(slot: MeldableMateriaSlot | MateriaSlot, filterByGrade: boolean = true): Materia[] {
+        const actualSlot: MateriaSlot = 'materiaSlot' in slot ? slot.materiaSlot : slot;
+        const materia = this._relevantMateria.filter(mat => mat.ilvl <= actualSlot.ilvl)
+            .filter(mat => mat.materiaGrade <= actualSlot.maxGrade)
+            .filter(mat => !mat.isHighGrade || actualSlot.allowsHighGrade);
         // Sort materia from highest to lowest
         materia.sort((left, right) => {
             if (left.materiaGrade > right.materiaGrade) {
@@ -1232,9 +1296,10 @@ export class GearPlanSheet {
         }
         // Find highest grade materia
         const maxGrade = materia[0].materiaGrade;
-        // Find lowest grade that we want to display - three grades lower. e.g. if the gear can support materia X,
+        // If filterByGrade is true, find lowest grade that we want to display - three grades lower. e.g. if the gear can support materia X,
         // then we want to display X, IX for pentamelds, as well as IIX and VIII for budget sets.
-        const minDisplayGrade = maxGrade - 3;
+        // If filtering is disabled, show everything.
+        const minDisplayGrade = filterByGrade ? maxGrade - 3 : 1;
         return materia.filter(mat => mat.materiaGrade >= minDisplayGrade);
     }
 
@@ -1258,12 +1323,20 @@ export class GearPlanSheet {
         const settings = this._itemDisplaySettings;
         return [
             ...this.dataManager.allItems.filter(item => {
+                // Special case for FSH
+                if (item.displayGearSlotName === 'OffHand'
+                    && item.usableByJob('FSH')) {
+                    return true;
+                }
                 return item.ilvl >= settings.minILvl
                     && (item.ilvl <= settings.maxILvl
                         || item.isCustomRelic && settings.higherRelics)
                     && (!item.isNqVersion || settings.showNq);
             }),
-            ...this._customItems];
+            ...this._customItems].filter(item => {
+            // TODO: setting to allow showing of hidden items
+            return settings.showHidden || !this.isItemHidden(item);
+        });
     }
 
     /**
@@ -1295,7 +1368,9 @@ export class GearPlanSheet {
                 // Unless the user has opted into showing one-stat-relevant food, only show food with two relevant substats.
                 // _dmRelevantFood is already filtered to food which has at least one relevant stat.
                 && (settings.showOneStatFood || (this.isStatRelevant(item.primarySubStat) && this.isStatRelevant(item.secondarySubStat)));
-        }), ...this._customFoods];
+        }), ...this._customFoods].filter(item => {
+            return settings.showHidden || !this.isItemHidden(item);
+        });
     }
 
     /**
@@ -1359,8 +1434,42 @@ export class GearPlanSheet {
         this._sets.forEach(set => set.forceRecalc());
     }
 
+    /**
+     * All gear items, not including custom items nor food.
+     */
     get allItems(): GearItem[] {
         return this.dataManager.allItems;
+    }
+
+    /**
+     * All food items, not including custom foods.
+     */
+    get allFoodItems(): FoodItem[] {
+        return this.dataManager.allFoodItems;
+    }
+
+    /**
+     * Medicine items which are relevant to the current job and pass the item-level filter.
+     */
+    get medicineItemsForDisplay(): MedicineItem[] {
+        const settings = this._itemDisplaySettings;
+        return this.dataManager.allMedicineItems.filter(item =>
+            item.ilvl >= settings.minILvlFood
+            && item.ilvl <= settings.maxILvlFood
+            && (this.isStatRelevant(item.primarySubStat) || this.isStatRelevant(item.secondarySubStat))
+            && (settings.showHidden || !this.isItemHidden(item))
+        );
+    }
+
+    /**
+     * All medicine items.
+     */
+    get allMedicineItems(): MedicineItem[] {
+        return this.dataManager.allMedicineItems;
+    }
+
+    get allMateria(): Materia[] {
+        return this.dataManager.allMateria;
     }
 
     /**
@@ -1535,6 +1644,27 @@ export class GearPlanSheet {
         }
         return null;
     }
+
+    isItemHidden(item: GearItem | FoodItem | MedicineItem): boolean {
+        return this.hiddenItems.has(item.id);
+    }
+
+    setItemHidden(item: GearItem | FoodItem | MedicineItem, isHidden: boolean) {
+        if (isHidden) {
+            this.hiddenItems.add(item.id);
+        }
+        else {
+            this.hiddenItems.delete(item.id);
+        }
+        // TODO: this is inefficient because it causes all of the gear tables to refresh, not just the one that we
+        // actually hid an item in.
+        this.gearDisplaySettingsUpdateNow();
+    }
+
+    resetHiddenItems() {
+        this.hiddenItems.clear();
+        this.gearDisplaySettingsUpdateNow();
+    }
 }
 
 function checkItemCompat(itemA: EquippedItem, itemB: EquippedItem): SlotIncompatibility | 'compatible' {
@@ -1546,7 +1676,7 @@ function checkItemCompat(itemA: EquippedItem, itemB: EquippedItem): SlotIncompat
     if (itemA.gearItem.isCustomRelic) {
         // Dealing with relics
         const badSubStats: string[] = [];
-        ALL_SUB_STATS.forEach(stat => {
+        ALL_COMBAT_SUB_STATS.forEach(stat => {
             const statValueA = itemA.relicStats[stat];
             const statValueB = itemB.relicStats[stat];
             if (statValueA !== statValueB) {
@@ -1649,21 +1779,14 @@ export type SlotIncompatibility = {
 export type SlotIncompatibilityReason = 'materia-mismatch' | 'relic-stat-mismatch';
 
 export type SheetExportOptions = {
-    /*
-    External seems to be true for:
-    1. We are publishing or explicitly exporting a set
-    2. A full stats request
-
-
-    It is false for:
-    Meld solver - this is a unique case, as we want sims but not a save key
-
-    We should deprecate this and break it down into smaller options.
-     */
-    // external: boolean;
     includeStats: boolean;
     includeSims: SimExportMode;
     includeSaveKey: boolean;
+    /**
+     * Whether to include flags such as items that are hidden, or (future state) items that are intended for inclusion
+     * in the gear solver possibilities.
+     */
+    includeItemFlags: boolean;
 }
 
 // TODO: make ternaries for the rest of the combinations
@@ -1681,6 +1804,7 @@ export const SolverExport = {
     includeStats: false,
     includeSims: 'none',
     includeSaveKey: false,
+    includeItemFlags: true,
 } as const satisfies SheetExportOptions;
 
 /**
@@ -1691,6 +1815,7 @@ const ExternalExport = {
     includeStats: false,
     includeSims: 'selected-only',
     includeSaveKey: false,
+    includeItemFlags: false,
 } as const satisfies SheetExportOptions;
 
 /**
@@ -1700,6 +1825,7 @@ const InternalSave = {
     includeStats: false,
     includeSims: 'all',
     includeSaveKey: true,
+    includeItemFlags: true,
 } as const satisfies SheetExportOptions;
 
 /**
@@ -1710,6 +1836,7 @@ const InternalSaveAs = {
     includeStats: false,
     includeSims: 'all',
     includeSaveKey: false,
+    includeItemFlags: true,
 } as const satisfies SheetExportOptions;
 
 /**
@@ -1719,6 +1846,7 @@ const FullStatsExport = {
     includeStats: true,
     includeSims: 'all',
     includeSaveKey: false,
+    includeItemFlags: true,
 } as const satisfies SheetExportOptions;
 
 export const ExportTypes = {
@@ -1728,3 +1856,85 @@ export const ExportTypes = {
     InternalSaveAs,
     FullStatsExport,
 } as const;
+
+function jobDataSerializationProxy(jobStats: JobData): JobDataExport {
+    return {
+        type: jobStats.type,
+        combatRole: jobStats.combatRole,
+        mainStat: jobStats.mainStat,
+        secondaryStat: jobStats.secondaryStat,
+        autoAttackStat: jobStats.autoAttackStat,
+        irrelevantSubstats: jobStats.irrelevantSubstats,
+        offhand: jobStats.offhand,
+        meldParamIndex: jobStats.meldParamIndex,
+        aaPotency: jobStats.aaPotency,
+        excludedRelicSubstats: jobStats.excludedRelicSubstats,
+        minLevel: jobStats.minLevel,
+        maxLevel: jobStats.maxLevel,
+        jobStatMultipliers: jobStats.jobStatMultipliers,
+    } satisfies JobDataExport;
+}
+
+/**
+ * Transform a ComputedSetStats into a form that serializes properly. That is, it serializes the getters rather
+ * than only the backing data. This is realistically what you would want out of the fulldata API endpoint.
+ *
+ * @param stats
+ */
+export function statsSerializationProxy(stats: ComputedSetStats): ComputedSetStatsExport {
+    // The purpose of this is that the fullstats API won't correctly serialize the ComputedSetStatsImpl normally.
+    return new Proxy(stats, {
+        get(target, prop, receiver) {
+            if (prop === 'jobStats') {
+                return jobDataSerializationProxy(target.jobStats);
+            }
+            // Check if the property is a getter on the prototype chain
+            let descriptor = Object.getOwnPropertyDescriptor(target, prop as string);
+            let proto = Object.getPrototypeOf(target);
+
+            while (!descriptor && proto) {
+                descriptor = Object.getOwnPropertyDescriptor(proto, prop as string);
+                proto = Object.getPrototypeOf(proto);
+            }
+
+            if (descriptor && typeof descriptor.get === 'function') {
+                return descriptor.get.call(target);
+            }
+
+            return Reflect.get(target, prop, receiver);
+        },
+        ownKeys(target) {
+            const keys = new Set<string | symbol>();
+
+            let obj: object = target;
+            while (obj) {
+                Reflect.ownKeys(obj).forEach((key) => {
+                    if (typeof key === 'string' && !key.startsWith('_')) {
+                        const descriptor = Object.getOwnPropertyDescriptor(obj, key);
+                        if (descriptor && typeof descriptor.get === 'function') {
+                            keys.add(key);
+                        }
+                    }
+                });
+                obj = Object.getPrototypeOf(obj);
+            }
+
+            return Array.from(keys);
+        },
+        getOwnPropertyDescriptor(target, prop) {
+            const descriptor = Object.getOwnPropertyDescriptor(target, prop)
+                || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(target), prop);
+
+            if (descriptor
+                && typeof descriptor.get === 'function'
+                && typeof prop === 'string'
+                && !prop.startsWith('_')) {
+                return {
+                    enumerable: true,
+                    configurable: true,
+                };
+            }
+            return undefined;
+        },
+    }) as unknown as ComputedSetStatsExport;
+}

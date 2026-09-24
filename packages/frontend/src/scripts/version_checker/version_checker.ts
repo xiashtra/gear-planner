@@ -1,6 +1,7 @@
 // Helpers to offer to refresh the site when a new version is detected.
 
 import {showNewVersionModal} from "./new_version_modal";
+import {killAnalytics} from "@xivgear/common-ui/analytics/analytics";
 
 export interface VersionPollerConfig {
     intervalMs: number;
@@ -14,7 +15,7 @@ export interface VersionPollerConfig {
 const DEFAULT_CONFIG = {
     intervalMs: 60_000,
     requiredConsecutiveChanges: 3,
-    fetchFn: (url: URL) => fetch(url, {credentials: "same-origin"}),
+    fetchFn: (url: URL) => fetch(url, {cache: 'no-cache', credentials: "same-origin"}),
     getRemoteUrl: () => {
         return new URL("index.html", window.location.href);
     },
@@ -63,10 +64,15 @@ export class VersionChecker {
     }
 
     start(): void {
+        this.fired = false;
         if (this.running) {
             return;
         }
         void this.run();
+    }
+
+    stop(): void {
+        this.running = false;
     }
 
     private async delayMs(ms: number): Promise<void> {
@@ -94,6 +100,10 @@ export class VersionChecker {
         }
 
         while (!this.fired) {
+            if (!this.running) {
+                // cancelled
+                return;
+            }
             try {
                 const res = await cfg.fetchFn(remoteUrl);
                 if (res.ok) {
@@ -169,6 +179,9 @@ export class VersionChecker {
 
 export function setupVersionChecker() {
     new VersionChecker({
-        onDetected: () => showNewVersionModal(),
+        onDetected: () => {
+            killAnalytics();
+            showNewVersionModal();
+        },
     }).start();
 }

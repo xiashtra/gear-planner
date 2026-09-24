@@ -33,6 +33,11 @@ type QueuedAction = {
 
 let actionQueue: QueuedAction[] | null = [];
 
+/**
+ * Dump all pending umami actions into a real umami when we receive one.
+ *
+ * @param umami
+ */
 function flushQueue(umami: umami.umami) {
     if (actionQueue) {
         const queue = actionQueue;
@@ -49,7 +54,11 @@ function flushQueue(umami: umami.umami) {
     }
 }
 
+/**
+ * queueProxy is a proxy for umami, and holds pending actions until we get a real umami
+ */
 const queueProxy = new Proxy({} as umami.umami, {
+    // Since we only ever get functions, we want to just "hold" the function call until we get the real umami
     get(target, prop: keyof umami.umami) {
         return (...args: unknown[]) => {
             actionQueue?.push({
@@ -60,21 +69,27 @@ const queueProxy = new Proxy({} as umami.umami, {
     },
 });
 
-let umamiValue: umami.umami = window.umami ?? queueProxy;
+let realUmami: umami.umami | null = null;
 
+function getEffectiveUmami(): umami.umami {
+    return window.umami ?? queueProxy;
+}
+
+/**
+ * Only do this if we don't have the real umami yet
+ */
 if (!window.umami) {
     console.info("umami not yet loaded - using queue");
     try {
+        // We want to intercept the write to the real umami
         Object.defineProperty(window, 'umami', {
             get() {
-                return umamiValue;
+                return realUmami;
             },
             set(val: umami.umami) {
-                if (val && val !== queueProxy) {
-                    console.info("got real umami");
-                    umamiValue = val;
-                    flushQueue(val);
-                }
+                console.info("got real umami");
+                realUmami = val;
+                setTimeout(() => flushQueue(val));
             },
             configurable: true,
             enumerable: true,
@@ -86,46 +101,94 @@ if (!window.umami) {
 }
 else {
     console.info("umami already loaded - no queue needed");
-}
-
-// If it was already set but not to our proxy, flush it.
-if (window.umami && window.umami !== queueProxy) {
+    // Flush it just in case
     flushQueue(window.umami);
 }
 
+let suppressAll: boolean = false;
+
+/**
+ * In the event that a new version is available, kill analytics entirely so that we aren't spammed with errors and such
+ * that have already been fixed.
+ */
+export function killAnalytics() {
+    suppressAll = true;
+}
+
+let events: number = 0;
+const MAX_EVENTS = 10_000;
+
 export function recordEvent(name: string, data?: ExtraData) {
+    if (suppressAll) {
+        console.info(`Analytics suppressed (${name}`);
+        return;
+    }
+    if (++events > MAX_EVENTS) {
+        console.warn(`Ignoring request to record event ${name} because too many events have been recorded (${events} > ${MAX_EVENTS})`, name, data);
+        return;
+    }
     try {
-        window.umami.track(name, data);
+        getEffectiveUmami().track(name, data);
     }
     catch (e) {
         console.error("Error recording analytics", e);
     }
 }
 
+let errors: number = 0;
+const MAX_ERRORS = 100;
+
 export function recordError(where: string, error: unknown, extraProps: object = {}) {
-    const umami = window.umami;
+    if (++errors > MAX_ERRORS) {
+        console.warn(`Ignoring request to record error because too many errors have been recorded (${errors} > ${MAX_ERRORS})`, where, error);
+        return;
+    }
+    if (suppressAll) {
+        console.info(`Analytics suppressed (${where}`);
+        return;
+    }
+    const umami = getEffectiveUmami();
     try {
         if (error instanceof Error) {
+            // Weird errors from some buggy browser addon
+            if (error.message?.includes("M_ID")) {
+                return;
+            }
             const eventData = {
+                ...{
+                    stack: error.stack,
+                    name: error.name,
+                    message: error.message,
+                },
                 ...toSerializableForm(error),
                 ...extraProps,
                 where: where,
+                serializationType: "error",
             };
             umami.track("error", eventData);
         }
         else if (error instanceof Object) {
+            if (JSON.stringify(error).includes("M_ID")) {
+                return;
+            }
             const eventData = {
                 ...error,
                 ...extraProps,
                 where: where,
+                serializationType: "object",
             };
             umami.track("error", eventData);
         }
         else {
+            const stringData = `${where}: ${String(error)}`;
+            if (stringData.includes("M_ID")) {
+                return;
+            }
             const eventData = {
-                stringData: `${where}: ${String(error)}`,
+                stringData: stringData,
                 ...extraProps,
                 where: where,
+                serializationType: "unknown",
             };
             umami.track("error", eventData);
         }
@@ -143,7 +206,7 @@ export function recordError(where: string, error: unknown, extraProps: object = 
 
 try {
     window.addEventListener('unhandledrejection', e => {
-        recordError("unhandledRejection", String(e.reason));
+        recordError('unhandledrejection', e.reason);
     });
 }
 catch (e) {

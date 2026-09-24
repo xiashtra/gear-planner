@@ -14,6 +14,7 @@ export enum SpecialStatType {
   Eureka = "Eureka",
   Bozja = "Bozja",
   OccultCrescent = "OccultCrescent",
+  Crucible = "Crucible",
 }
 
 export enum GearAcquisitionSource {
@@ -229,6 +230,12 @@ export type ItemBase = XivApiObject &
 export type ItemLevel = XivApiObject &
   XivApiBase & {
     /** @format int32 */
+    CP: number;
+    /** @format int32 */
+    control: number;
+    /** @format int32 */
+    craftsmanship: number;
+    /** @format int32 */
     criticalHit: number;
     /** @format int32 */
     defense: number;
@@ -241,6 +248,10 @@ export type ItemLevel = XivApiObject &
     /** @format int32 */
     directHitRate: number;
     /** @format int32 */
+    GP: number;
+    /** @format int32 */
+    gathering: number;
+    /** @format int32 */
     HP: number;
     /** @format int32 */
     intelligence: number;
@@ -250,6 +261,8 @@ export type ItemLevel = XivApiObject &
     magicalDamage: number;
     /** @format int32 */
     mind: number;
+    /** @format int32 */
+    perception: number;
     /** @format int32 */
     physicalDamage: number;
     /** @format int32 */
@@ -298,6 +311,10 @@ export type MateriaItem = XivApiObject &
     /** @format int32 */
     ilvl: number;
   };
+
+export interface MedicineEndpointResponse {
+  items: Food[];
+}
 
 export interface SchemaVersionEndpointResponse {
   schemaVersion: string;
@@ -696,6 +713,22 @@ export class DataApiClient<
     materia: (params: RequestParams = {}) =>
       this.request<MateriaEndpointResponse, any>({
         path: `/Materia`,
+        method: "GET",
+        format: "json",
+        ...params,
+      }),
+  };
+  medicine = {
+    /**
+     * No description
+     *
+     * @name FoodItems1
+     * @summary Get medicine items
+     * @request GET:/Medicine
+     */
+    foodItems1: (params: RequestParams = {}) =>
+      this.request<MedicineEndpointResponse, any>({
+        path: `/Medicine`,
         method: "GET",
         format: "json",
         ...params,

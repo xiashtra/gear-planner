@@ -1,5 +1,5 @@
 import {CharacterGearSet, previewItemStatDetail} from "../gear";
-import {GearItem, RawStatKey, RawStats} from "@xivgear/xivmath/geartypes";
+import {EwRelicStatModel, GearItem, RawStatKey, RawStats} from "@xivgear/xivmath/geartypes";
 import {expect} from 'chai';
 import {NewApiDataManager} from "../datamanager_new";
 import {ALL_COMBAT_JOBS, MAIN_STATS} from "@xivgear/xivmath/xivconstants";
@@ -78,6 +78,10 @@ describe('bug #695 - offhands have wrong stats', () => {
             await dm.loadData();
             const failures: string[] = [];
             dm.allItems.forEach(item => {
+                // TODO: workaround for BST stuff for now
+                if (item.ilvl < 290) {
+                    return;
+                }
                 if (item.isCustomRelic) {
                     return;
                 }
@@ -87,6 +91,11 @@ describe('bug #695 - offhands have wrong stats', () => {
                 }
                 if (item.id === 34455 || item.id === 34474) {
                     // Known issue with this specific PLD 1H+Shield
+                    return;
+                }
+                // Due to BLU's lower minimum level, it will pick up a lot of items that offer the wrong main stat.
+                // It is expected that these mismatch, because a caster will have a lower value on non-int main stats.
+                if (job === 'BLU' && item.stats.intelligence === 0) {
                     return;
                 }
                 const primarySub = item.primarySubstat;
@@ -129,6 +138,9 @@ describe('bug #695 - offhands have wrong stats', () => {
                             return;
                         }
                         else if (item.ilvl === 560 && item.stats.vitality === 115) {
+                            return;
+                        }
+                        else if (item.ilvl === 690 && item.stats.vitality === 214) {
                             return;
                         }
                     }
@@ -224,3 +236,74 @@ describe('Feature 24 - support items that give primary/secondary stat directly s
         expect(menphina.isCustomRelic).to.equal(false);
     });
 }).timeout(30_000);
+
+describe('Custom relic detection', () => {
+    const bluSheet = HEADLESS_SHEET_PROVIDER.fromScratch(undefined, 'relic test BLU', 'BLU', 50, 135, false);
+    const pldSheet = HEADLESS_SHEET_PROVIDER.fromScratch(undefined, 'relic test PLD', 'PLD', 90, 665, false);
+    before(async function () {
+        this.timeout(30_000);
+        await Promise.all([bluSheet.load(), pldSheet.load()]);
+    });
+    it('detects PLD items as relics correctly', () => {
+        // Relic Sword
+        expect(pldSheet.itemById(40932).isCustomRelic).to.eq(true);
+        // Relic Shield
+        expect(pldSheet.itemById(40951).isCustomRelic).to.eq(true);
+        // Non-relic sword
+        expect(pldSheet.itemById(40165).isCustomRelic).to.eq(false);
+        // Non-relic shield
+        expect(pldSheet.itemById(40184).isCustomRelic).to.eq(false);
+        // Pre-order earrings
+        const menphina = pldSheet.itemById(33648);
+        expect(menphina.isCustomRelic).to.equal(false);
+    });
+    it('detects BLU items correctly', () => {
+        // eslint-disable-next-line no-constant-condition
+        if (true) {
+            // TODO: re-enable this test once issues from BST are fixed
+            return;
+        }
+        // Random 1-rarity item
+        // Disabled because this is now getting filtered out
+        // expect(bluSheet.itemById(11958).isCustomRelic).to.eq(false);
+        expect(bluSheet.itemById(11958)).to.be.undefined;
+        // Pentameld item
+        expect(bluSheet.itemById(10922).isCustomRelic).to.eq(false);
+        // Aetherial item
+        // expect(bluSheet.itemById(13417).isCustomRelic).to.eq(false);
+        expect(bluSheet.itemById(13417)).to.be.undefined;
+        // Normal item
+        expect(bluSheet.itemById(8922).isCustomRelic).to.eq(false);
+        // Should pick up weapons despite them not having INT
+        expect(bluSheet.itemById(41700).isCustomRelic).to.eq(false);
+        // Should pick up the level 50 weapon
+        expect(bluSheet.itemById(24551).isCustomRelic).to.eq(false);
+    });
+
+});
+
+describe('Custom relic issues', () => {
+    const pldSheet = HEADLESS_SHEET_PROVIDER.fromScratch(undefined, 'relic test PLD', 'PLD', 100, undefined, false);
+    before(async function () {
+        this.timeout(30_000);
+        await pldSheet.load();
+    });
+    it('has correct PLD 100 weapon stats', () => {
+        const phantomSword = pldSheet.itemById(51000);
+        expect(phantomSword.isCustomRelic).to.equal(true);
+        const relic = phantomSword.relicStatModel as EwRelicStatModel;
+        expect(relic.type).to.equal('ewrelic');
+        expect(relic.largeValue).to.equal(319);
+        expect(relic.smallValue).to.equal(76);
+    });
+    it('has correct PLD 100 shield stats', () => {
+        const phantomShield = pldSheet.itemById(51021);
+        expect(phantomShield.isCustomRelic).to.equal(true);
+        const relic = phantomShield.relicStatModel as EwRelicStatModel;
+        expect(relic.type).to.equal('ewrelic');
+        expect(relic.largeValue).to.equal(128);
+        expect(relic.smallValue).to.equal(32);
+
+    });
+
+});

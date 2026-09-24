@@ -70,8 +70,11 @@ export class OptionDataElement<X> extends HTMLOptionElement {
 }
 
 export class DataSelect<X> extends HTMLSelectElement {
-    constructor(items: X[], textGetter: (item: X) => string, callback: ((newValue: X) => void) | undefined, initialSelectedItem: (typeof items[number] | undefined) = undefined) {
+    protected textGetter: (item: X) => string;
+
+    constructor(items: readonly X[], textGetter: (item: X) => string, callback: ((newValue: X) => void) | undefined, initialSelectedItem: (typeof items[number] | undefined) = undefined) {
         super();
+        this.textGetter = textGetter;
         for (const item of items) {
             const opt = new OptionDataElement(item);
             opt.textContent = textGetter(item);
@@ -91,6 +94,43 @@ export class DataSelect<X> extends HTMLSelectElement {
         return (this.selectedOptions.item(0) as OptionDataElement<X>).dataValue;
     }
 
+    set selectedItem(item: X) {
+        for (let i = 0; i < this.options.length; i++) {
+            const opt = this.options.item(i) as OptionDataElement<X>;
+            if (opt.dataValue === item) {
+                if (this.selectedIndex !== i) {
+                    this.selectedIndex = i;
+                    this.dispatchEvent(new Event('change'));
+                }
+                return;
+            }
+        }
+    }
+
+    /**
+     * Update the list of items in the select, and the selected item.
+     *
+     * @param items The new list of items.
+     * @param selectedItem The new selected item. Must be either null, or an item in the list of items.
+     */
+    updateItems<ActualItem extends X>(items: readonly ActualItem[], selectedItem: ActualItem | null) {
+        const textGetter = this.textGetter;
+        this.options.length = 0;
+        let indexToSelect = -1;
+        for (const item of items) {
+            const opt = new OptionDataElement(item);
+            opt.textContent = textGetter(item);
+            this.options.add(opt);
+            if (selectedItem !== null && item === selectedItem) {
+                indexToSelect = this.options.length - 1;
+            }
+        }
+        if (this.selectedIndex !== indexToSelect) {
+            this.selectedIndex = indexToSelect;
+            this.dispatchEvent(new Event('change'));
+        }
+    }
+
 }
 
 let idCounter = 1;
@@ -99,13 +139,19 @@ export function randomId(prefix: string = 'unique-id-'): string {
     return prefix + (idCounter++);
 }
 
-export function labelFor(label: string | Node, labelFor: HTMLElement) {
+export function labelFor(label: string | Node, labelFor: HTMLElement): HTMLLabelElement {
     const element = quickElement('label', [], [label]);
     if (!labelFor.id) {
         labelFor.id = randomId('lbl-id-');
     }
     element.htmlFor = labelFor.id;
     return element;
+}
+
+export function wrappedLabelPost(label: string | Node, inputElement: HTMLElement): HTMLLabelElement {
+    const out = labelFor(label, inputElement);
+    out.prepend(inputElement);
+    return out;
 }
 
 export type BooleanListener = (value: boolean) => void;
@@ -650,7 +696,7 @@ export type ElOpts<X extends keyof HTMLElementTagNameMap> = {
      */
     style?: {
         [K in WritableCssProp]?: string;
-    }
+    };
 };
 
 /**
@@ -660,7 +706,7 @@ export type ElOpts<X extends keyof HTMLElementTagNameMap> = {
  * @param opts The options to use
  * @param nodes Child nodes
  */
-export function el<X extends keyof HTMLElementTagNameMap>(tag: X, opts: ElOpts<X> = {}, nodes: Parameters<ParentNode['replaceChildren']> = []) {
+export function el<X extends keyof HTMLElementTagNameMap>(tag: X, opts: ElOpts<X> = {}, nodes: Parameters<ParentNode['replaceChildren']> = []): HTMLElementTagNameMap[X] {
     const classes = opts.classes ?? [];
     if (opts.class) {
         classes.push(opts.class);
@@ -668,6 +714,9 @@ export function el<X extends keyof HTMLElementTagNameMap>(tag: X, opts: ElOpts<X
     const out = quickElement(tag, classes, nodes);
     if (opts.id) {
         out.id = opts.id;
+    }
+    if (opts.title) {
+        out.title = opts.title;
     }
     if (opts.props) {
         for (const [key, value] of Object.entries(opts.props)) {
