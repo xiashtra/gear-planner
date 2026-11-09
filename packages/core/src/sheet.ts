@@ -5,6 +5,7 @@ import {
     ALL_COMBAT_SUB_STATS,
     ALL_JOBS,
     CURRENT_MAX_LEVEL,
+    DEFAULT_MATERIA_ACCEPTABLE_OVERCAP_LOSS,
     defaultItemDisplaySettings,
     DefaultMateriaFillPrio,
     DOH_STATS,
@@ -16,7 +17,6 @@ import {
     JobName,
     LEVEL_ITEMS,
     MAIN_STATS,
-    DEFAULT_MATERIA_ACCEPTABLE_OVERCAP_LOSS,
     MateriaSubstat,
     RaceName,
     SPECIAL_STAT_KEYS,
@@ -40,12 +40,12 @@ import {
     JobDataConst,
     JobDataExport,
     Materia,
-    MedicineItem,
     MateriaAutoFillController,
     MateriaAutoFillPrio,
     MateriaFillMode,
     MateriaSlot,
     MateriaWasteLimits,
+    MedicineItem,
     MeldableMateriaSlot,
     NormalOccGearSlotKey,
     OccGearSlotKey,
@@ -214,6 +214,7 @@ export class GearPlanSheet {
     // Display settings
     private _showAdvancedStats: boolean = false;
     private readonly _itemDisplaySettings: ItemDisplaySettings = getDefaultDisplaySettings(CURRENT_MAX_LEVEL, 'WHM', undefined);
+    protected customColumns: string[] = [];
 
     // Init related
     private _setupDone: boolean = false;
@@ -221,6 +222,7 @@ export class GearPlanSheet {
 
     // Display state
     private _isViewOnly: boolean = false;
+    private _isSpecificItems: boolean = false;
     isEmbed: boolean = false;
 
     // Temporal state
@@ -250,6 +252,7 @@ export class GearPlanSheet {
         this.classJobName = importedData.job ?? 'WHM';
         this.isMultiJob = importedData.isMultiJob ?? false;
         this._activeSpecialStat = (importedData.specialStats ?? null) as SpecialStatType | null;
+        this.customColumns = [...(importedData.sheetDisplaySettings?.customColumns ?? [])];
         this.altJobs = this.isMultiJob ? [
             ...ALL_JOBS.filter(job => {
                 const thatJobData = JOB_DATA[job];
@@ -391,6 +394,17 @@ export class GearPlanSheet {
         this._isViewOnly = true;
     }
 
+    /**
+     * Enable view-only mode, and specifically only request the items in the exported data from the DataManager.
+     * This should be used by the stats server's fulldata endpoints, but the jury's still out on client-side usage, as
+     * the smaller response has to be weighed against the significantly lower
+     *
+     */
+    setSpecificItemsView() {
+        this._isViewOnly = true;
+        this._isSpecificItems = true;
+    }
+
     get allJobs(): DmJobs {
         return [this.classJobName, ...this.altJobs];
     }
@@ -399,7 +413,22 @@ export class GearPlanSheet {
      * Load the sheet data fully. Create a DataManager internally.
      */
     async load() {
-        const dataManager = makeDataManager(this.allJobs, this.level, this.ilvlSync);
+        let specificItems: Set<number> | undefined;
+        if (this._isSpecificItems) {
+            specificItems = new Set<number>();
+            this._importedData.sets.forEach(set => {
+                for (const equipmentSlot in set.items) {
+                    const importedItem: ItemSlotExport | undefined = set.items[equipmentSlot as EquipSlotKey];
+                    if (importedItem) {
+                        specificItems.add(importedItem.id);
+                    }
+                }
+            });
+        }
+        else {
+            specificItems = undefined;
+        }
+        const dataManager = makeDataManager(this.allJobs, this.level, this.ilvlSync, specificItems);
         await dataManager.loadData();
         await this.loadFromDataManager(dataManager);
 
@@ -416,7 +445,6 @@ export class GearPlanSheet {
      * @param dataManager The DataManager to use.
      */
     async loadFromDataManager(dataManager: DataManager) {
-        console.log("Loading sheet...");
         console.log("Reading data");
         const saved = this._importedData;
         const lvlItemInfo = LEVEL_ITEMS[this.level];
@@ -460,7 +488,7 @@ export class GearPlanSheet {
                 }
             }
         }
-        this._dmRelevantFood = this.dataManager.allFoodItems.filter(food => this.isStatRelevant(food.primarySubStat) || this.isStatRelevant(food.secondarySubStat));
+        this._dmRelevantFood = this.dataManager.allFoodItems.filter(food => this.isStatRelevant(food.primaryStat) || this.isStatRelevant(food.secondaryStat));
         // This is set when importing - but it needs to know about items first. Thus we have to redo this now.
         this.activeSpecialStat = this._activeSpecialStat;
         this._setupDone = true;
@@ -602,6 +630,9 @@ export class GearPlanSheet {
             race: this._race,
             sims: simsExport,
             itemDisplaySettings: this._itemDisplaySettings,
+            sheetDisplaySettings: {
+                customColumns: [...this.customColumns],
+            },
             mfm: this.materiaFillMode,
             mfp: this.materiaAutoFillPrio.statPrio,
             mfMinGcd: this.materiaAutoFillPrio.minGcd,
@@ -751,6 +782,7 @@ export class GearPlanSheet {
             items: items,
             food: set.food ? set.food.id : undefined,
             medicine: set.medicine ? set.medicine.id : undefined,
+            specialistBonusEnabled: set.specialistBonusEnabled || undefined,
             description: set.description,
             isSeparator: set.isSeparator,
         };
@@ -1042,6 +1074,9 @@ export class GearPlanSheet {
             if (importedSet.medicine) {
                 set.medicine = this.medicineById(importedSet.medicine);
             }
+            if (importedSet.specialistBonusEnabled) {
+                set.specialistBonusEnabled = true;
+            }
             if (importedSet.relicStatMemory) {
                 set.relicStatMemory.import(importedSet.relicStatMemory);
             }
@@ -1132,29 +1167,36 @@ export class GearPlanSheet {
      * * If it is gear haste, it is only relevant if we have an active special stat which cares about haste.
      *
      * @param stat
+     * @param job overrides the job, useful for multi-job sheets
      */
-    isStatRelevant(stat: RawStatKey | undefined): boolean {
+    isStatRelevant(stat: RawStatKey | undefined, job: JobName = this.classJobName): boolean {
+        // TODO: more things should
         if (stat === undefined) {
             return false;
         }
-        if (!this.classJobEarlyStats) {
+        const classJobEarlyStats = getClassJobStats(job);
+        if (!classJobEarlyStats) {
             // Not sure what the best way to handle this is
             return true;
         }
-        switch (this.classJobEarlyStats.type) {
+        // TODO
+        if (stat === 'vitality') {
+            return true;
+        }
+        switch (classJobEarlyStats.type) {
             case "Combat":
                 if (DOH_STATS.includes(stat as typeof DOH_STATS[number]) || DOL_STATS.includes(stat as typeof DOL_STATS[number])) {
                     return false;
                 }
                 if (MAIN_STATS.includes(stat as typeof MAIN_STATS[number])) {
-                    return (stat === this.classJobEarlyStats.mainStat);
+                    return (stat === classJobEarlyStats.mainStat);
                 }
                 if (stat === 'gearHaste') {
                     const specialStat = this.activeSpecialStat;
                     return SPECIAL_STATS_MAPPING[specialStat]?.showHaste ?? false;
                 }
-                if (this.classJobEarlyStats.irrelevantSubstats) {
-                    return !this.classJobEarlyStats.irrelevantSubstats.includes(stat as Substat);
+                if (classJobEarlyStats.irrelevantSubstats) {
+                    return !classJobEarlyStats.irrelevantSubstats.includes(stat as Substat);
                 }
                 else {
                     return ALL_COMBAT_STATS.includes(stat as typeof ALL_COMBAT_STATS[number]);
@@ -1164,6 +1206,16 @@ export class GearPlanSheet {
             case "DoL":
                 return DOL_STATS.includes(stat as typeof DOL_STATS[number]);
         }
+    }
+
+    /**
+     * Determine if a stat is relevant for medicine items. This is the same as
+     * {@link #isStatRelevant} but returns false for vitality.
+     *
+     * @param stat The medicine stat
+     */
+    isStatRelevantForMedicine(stat: RawStatKey | undefined) {
+        return stat !== 'vitality' && this.isStatRelevant(stat);
     }
 
     /**
@@ -1367,7 +1419,7 @@ export class GearPlanSheet {
             return item.ilvl >= settings.minILvlFood && item.ilvl <= settings.maxILvlFood
                 // Unless the user has opted into showing one-stat-relevant food, only show food with two relevant substats.
                 // _dmRelevantFood is already filtered to food which has at least one relevant stat.
-                && (settings.showOneStatFood || (this.isStatRelevant(item.primarySubStat) && this.isStatRelevant(item.secondarySubStat)));
+                && (settings.showOneStatFood || (this.isStatRelevant(item.primaryStat) && this.isStatRelevant(item.secondaryStat)));
         }), ...this._customFoods].filter(item => {
             return settings.showHidden || !this.isItemHidden(item);
         });
@@ -1380,7 +1432,7 @@ export class GearPlanSheet {
         return [...this._dmRelevantFood.filter(item => {
             return item.ilvl >= defaultItemDisplaySettings.minILvlFood
                 // Filter to only two relevant substats (i.e. no tenacity for healers)
-                && (this.isStatRelevant(item.primarySubStat) && this.isStatRelevant(item.secondarySubStat));
+                && (this.isStatRelevant(item.primaryStat) && this.isStatRelevant(item.secondaryStat));
         }), ...this._customFoods];
     }
 
@@ -1456,7 +1508,7 @@ export class GearPlanSheet {
         return this.dataManager.allMedicineItems.filter(item =>
             item.ilvl >= settings.minILvlFood
             && item.ilvl <= settings.maxILvlFood
-            && (this.isStatRelevant(item.primarySubStat) || this.isStatRelevant(item.secondarySubStat))
+            && (this.isStatRelevantForMedicine(item.primaryStat) || this.isStatRelevantForMedicine(item.secondaryStat))
             && (settings.showHidden || !this.isItemHidden(item))
         );
     }
@@ -1489,7 +1541,7 @@ export class GearPlanSheet {
         else {
             if (levelSync !== null) {
                 // Implicit ilvl sync
-                const implicitSync = this.dataManager.getImplicitIlvlSync(levelSync, true);
+                const implicitSync = this.dataManager.getImplicitIlvlSync(levelSync, false);
                 if (implicitSync === undefined) {
                     return {
                         lvlSync: levelSync,
@@ -1866,7 +1918,8 @@ function jobDataSerializationProxy(jobStats: JobData): JobDataExport {
         autoAttackStat: jobStats.autoAttackStat,
         irrelevantSubstats: jobStats.irrelevantSubstats,
         offhand: jobStats.offhand,
-        meldParamIndex: jobStats.meldParamIndex,
+        // Deprecated, keep dummy value here to keep consumers happy
+        meldParamIndex: 0,
         aaPotency: jobStats.aaPotency,
         excludedRelicSubstats: jobStats.excludedRelicSubstats,
         minLevel: jobStats.minLevel,

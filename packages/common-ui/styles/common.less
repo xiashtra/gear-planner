@@ -927,6 +927,13 @@ table.gear-plan-table {
       .extra-stat-info {
         display: unset !important;
       }
+
+      .mitigation-stat-display .extra-stat-info {
+        display: block !important;
+        float: none;
+        padding-right: 0;
+        text-align: center;
+      }
     }
 
 
@@ -1477,7 +1484,6 @@ gear-plan {
   }
 
   .gear-sheet-editor-area {
-    flex-basis: var(--bottom-flex-basis);
     flex-basis: 100%;
     flex-shrink: 99999;
     flex-grow: 0;
@@ -1679,7 +1685,7 @@ table {
   }
 }
 
-.left-side-gear-table, .right-side-gear-table {
+.left-side-gear-table, .right-side-gear-table, .food-medicine-table-side {
   display: inline-block;
   flex-basis: var(--item-table-max-width);
   flex-shrink: 1;
@@ -2814,7 +2820,7 @@ food-stat-bonus {
 table.food-items-table, table.medicine-items-table {
 
   .food-stat-col {
-    --food-stat-col-width: 80px;
+    --food-stat-col-width: 75px;
     min-width: var(--food-stat-col-width);
     max-width: var(--food-stat-col-width);
     width: var(--food-stat-col-width);
@@ -2836,10 +2842,7 @@ table.food-items-table, table.medicine-items-table {
 
   [col-id='icon'] {
     height: unset;
-
-    img {
-      height: 27px;
-    }
+    --item-icon-size: 27px;
   }
 
   .food-stat-narrow {
@@ -2860,6 +2863,20 @@ table.food-items-table, table.medicine-items-table {
       > * {
         text-align: left;
         line-height: normal;
+      }
+    }
+  }
+  @media screen and (width > 900px) {
+
+    // Shift the bottom of the fraction down a bit and make it smaller.
+    // Healers/Tanks have 6 relevant food stats, so need to make this a bit more narrow to fit into the same
+    // width as a gear table.
+    food-stat-bonus.food-undercapped {
+      .food-cap {
+        font-size: 80%;
+        vertical-align: bottom;
+        position: relative;
+        top: 5px;
       }
     }
   }
@@ -3715,7 +3732,7 @@ gear-set-issues-modal {
   .shadow-big();
 }
 
-alt-items-modal {
+alt-items-modal, alt-foods-modal, alt-medicines-modal {
   .modal-content-area {
     width: min-content;
     max-width: 100%;
@@ -3738,9 +3755,6 @@ alt-items-modal {
         padding-right: 0;
         box-sizing: content-box;
 
-        img {
-          height: 100%;
-        }
       }
 
       *[col-id="itemname"] {

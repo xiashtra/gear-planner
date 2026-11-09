@@ -161,6 +161,10 @@ export type EquipSlotMap = {
     getBlockedSlots(): EquipSlotKey[];
 }
 
+/**
+ * The quality of an item. 'none' means the item does not support NQ/HQ. 'nq'/'hq' mean what you would expect.
+ */
+export type ItemQuality = 'none' | 'nq' | 'hq';
 
 export interface XivItem {
     /**
@@ -179,6 +183,10 @@ export interface XivItem {
      * Item icon URL
      */
     iconUrl: URL;
+    /**
+     * Item quality
+     */
+    quality: ItemQuality;
 }
 
 export interface XivCombatItem extends XivItem {
@@ -217,9 +225,7 @@ export interface GearItem extends XivCombatItem {
      * The secondary substat
      */
     secondarySubstat: keyof RawStats | null;
-    statCaps: {
-        [K in RawStatKey]?: number
-    };
+    statCaps: RawStatsPart;
     /**
      * Materia slots on the item. When downsynced, this is replaced with an empty list.
      */
@@ -259,15 +265,15 @@ export type FoodBonuses = {
 export interface FoodItem extends XivItem {
     ilvl: number,
     bonuses: FoodBonuses,
-    primarySubStat: RawStatKey | undefined,
-    secondarySubStat: RawStatKey | undefined
+    primaryStat: RawStatKey | undefined,
+    secondaryStat: RawStatKey | undefined
 }
 
 export interface MedicineItem extends XivItem {
     ilvl: number,
     bonuses: FoodBonuses,
-    primarySubStat: RawStatKey | undefined,
-    secondarySubStat: RawStatKey | undefined
+    primaryStat: RawStatKey | undefined,
+    secondaryStat: RawStatKey | undefined
 }
 
 export interface Materia extends XivCombatItem {
@@ -331,6 +337,7 @@ export interface ComputedSetStats extends RawStats {
      * Compute the effective auto-attack delay. Assumes the attack has the type 'Auto-attack'.
      *
      * @param buffHaste The amount of haste from buffs.
+     * @param gaugeHaste The amount of haste from gauge and gauge-like things.
      */
     effectiveAaDelay(buffHaste: number, gaugeHaste: number): number;
 
@@ -653,14 +660,6 @@ export type JobDataConst = ({
     //     [K in RawStatKey]?: number
     // };
     /**
-     * Which BaseParam.MeldParam index to use for calculating stat caps.
-     * Makes hardcoded itemStatCapMultipliers obsolete.
-     * Since these only have numeric indices with no indication of which is which, it is derived from looking at gear
-     * pieces of the same ilvl and comparing their stats across different jobs. However, there are many rows which are
-     * identical for
-     */
-    readonly meldParamIndex: number;
-    /**
      * Auto-attack potency amount
      */
     readonly aaPotency: number;
@@ -771,13 +770,17 @@ export type JobDataExport = Pick<JobData,
     | 'autoAttackStat'
     | 'irrelevantSubstats'
     | 'offhand'
-    | 'meldParamIndex'
     | 'aaPotency'
     | 'excludedRelicSubstats'
     | 'minLevel'
     | 'maxLevel'
     | 'jobStatMultipliers'
->;
+> & {
+    /**
+     * @deprecated This is a property of items, not jobs or roles
+     */
+    meldParamIndex: 0,
+};
 
 export interface JobTrait {
     minLevel?: number,
@@ -832,6 +835,13 @@ export interface SimExport {
     name?: string
 }
 
+export type SheetDisplaySettings = {
+    /**
+     * The keys of custom columns to display on the sheet.
+     */
+    customColumns?: string[],
+};
+
 // TODO: further split this up. API vs Local should have different types.
 /**
  * Represents an exported set. Many of the fields fill the same role as the fields
@@ -879,8 +889,12 @@ export interface SheetExport {
     sims?: SimExport[],
     /**
      * Settings regarding which items to display
-     */
+    */
     itemDisplaySettings?: ItemDisplaySettings,
+    /**
+     * Settings for displaying sheet columns and other sheet-level UI.
+     */
+    sheetDisplaySettings?: SheetDisplaySettings,
     // Keeping these abbreviated so exports don't become unnecessarily large
     // /**
     //  * Whether to auto-fill materia into newly selected items (Materia Fill New Items).
@@ -1063,6 +1077,10 @@ export interface SetExport {
      * Equipped medicine (by item ID)
      */
     medicine?: number,
+    /**
+     * Whether the crafter specialist bonus is enabled. Only applicable to DoH.
+     */
+    specialistBonusEnabled?: boolean,
     /**
      * When a relic is de-selected, its former stats are remembered here so that they can be recalled if the
      * relic is selected again. They keys are item IDs, and the values are {@link RelicStats}.
@@ -1308,9 +1326,12 @@ export interface MultiplierStat extends GeneralStat {
 }
 
 /**
- * Stat that provides a
+ * Stat that provides a mitigation
  */
 export interface MitigationStat extends GeneralStat {
+    /**
+     * The incoming multiplier. e.g. 0.95 means 5% mitigation.
+     */
     incomingMulti: number
 }
 
@@ -1542,5 +1563,16 @@ export type MicroSlotExport = FoodMicroSlotExport | NormalItemMicroSlotExport | 
 
 export type IlvlSyncInfo = {
     readonly ilvl: number;
-    substatCap(slot: OccGearSlotKey, statsKey: RawStatKey): number;
+    /**
+     * Get the ItemLevel modifier for a stat at this item level.
+     */
+    getIlvlModifier(statsKey: RawStatKey): number | undefined;
+    /**
+     * Calculate the substat cap for a given slot, stat, and meldParamIndex. Returns null to indicate no cap.
+     *
+     * @param slot
+     * @param statsKey
+     * @param meldParamIndex
+     */
+    substatCap(slot: OccGearSlotKey, statsKey: RawStatKey, meldParamIndex: number | null): number | null;
 }

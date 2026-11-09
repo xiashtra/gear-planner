@@ -5,9 +5,10 @@ import {makeUrl, NavState, ONLY_SET_QUERY_PARAM} from "@xivgear/core/nav/common_
 import {recordSheetEvent} from "../../../analytics/analytics";
 import {MateriaTotalsDisplay} from "./materia";
 import {EquipSlotKey, EquipSlots, GearItem} from "@xivgear/xivmath/geartypes";
-import {FoodItemViewTable, GearItemsViewTable, MedicineItemViewTable} from "./items";
+import {FoodItemViewTable, GearItemsViewTable, MedicineItemViewTable, SpecialistBonusTable} from "./items";
 import {SetViewToolbar} from "../toolbar/totals_display";
 import {ExpandableText} from "@xivgear/common-ui/components/expandy_text";
+import {el} from "@xivgear/common-ui/components/util";
 import {stringToParagraphs} from "../../../util/text_utils";
 
 /**
@@ -118,20 +119,34 @@ export class GearSetViewer extends HTMLElement {
         }
         this.appendChild(gearTableSet);
 
-        // Food table TODO make readonly
+        // Food and medicine tables
+        const foodMedicineTableSet = el('div', {class: 'gear-table-sides-holder'});
+
         const food = this.gearSet.food;
         if (food) {
-            const foodTable = new FoodItemViewTable(this.sheet, this.gearSet, food);
+            const alts = this.gearSet.getAltFoodFor(food);
+            const foodTable = new FoodItemViewTable(this.sheet, this.gearSet, food, alts);
             foodTable.classList.add('food-view-table');
             // foodTable.id = "food-items-table";
-            this.appendChild(foodTable);
+            const foodTableSide = el('div', {class: 'food-medicine-table-side'}, [foodTable]);
+            foodMedicineTableSet.appendChild(foodTableSide);
         }
 
         const medicine = this.gearSet.medicine;
-        if (medicine && this.gearSet.classJobStats.type !== 'Combat') {
-            const medicineTable = new MedicineItemViewTable(this.sheet, this.gearSet, medicine);
+        if (medicine) {
+            const alts = this.gearSet.getAltMedicineFor(medicine);
+            const medicineTable = new MedicineItemViewTable(this.sheet, this.gearSet, medicine, alts);
             medicineTable.classList.add('food-view-table');
-            this.appendChild(medicineTable);
+            const medicineTableSide = el('div', {class: 'food-medicine-table-side'}, [medicineTable]);
+            foodMedicineTableSet.appendChild(medicineTableSide);
+        }
+
+        if (foodMedicineTableSet.childElementCount > 0) {
+            this.appendChild(foodMedicineTableSet);
+        }
+
+        if (this.gearSet.classJobStats.type === 'DoH' && this.gearSet.specialistBonusEnabled) {
+            this.appendChild(new SpecialistBonusTable(this.gearSet, true));
         }
     }
 

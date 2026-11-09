@@ -8,7 +8,7 @@ export type ApiClientRawType<X extends keyof DataApiClient<never>, Y extends key
 export type ApiItemData = NonNullable<Awaited<ReturnType<ApiClientRawType<'items', 'items'>>>['data']['items']>[number];
 export type ApiMateriaData = NonNullable<Awaited<ReturnType<ApiClientRawType<'materia', 'materia'>>>['data']['items']>[number];
 export type ApiFoodData = NonNullable<Awaited<ReturnType<ApiClientRawType<'food', 'foodItems'>>>['data']['items']>[number];
-export type ApiMedicineData = NonNullable<Awaited<ReturnType<ApiClientRawType<'medicine', 'foodItems1'>>>['data']['items']>[number];
+export type ApiMedicineData = NonNullable<Awaited<ReturnType<ApiClientRawType<'medicine', 'medicineItems'>>>['data']['items']>[number];
 // type BaseParamType = Awaited<ReturnType<ApiClientRawType<'baseParams', 'baseParams'>>>['data']['items'][number]
 export type ApiJobType = NonNullable<Awaited<ReturnType<ApiClientRawType<'jobs', 'jobs'>>>['data']['items']>[number];
 // type ItemLevelType = Awaited<ReturnType<ApiClientRawType<'itemLevel', 'itemLevels'>>>['data']['items'][number]
@@ -66,15 +66,25 @@ export function setDataApi(baseUrl: string) {
     DATA_API_CLIENT.baseUrl = baseUrl;
 }
 
+function formatHeaders(headers: Headers | null | undefined): string {
+    if (!headers) {
+        return '';
+    }
+    const formattedHeaders = Array.from(headers.entries())
+        .map(([name, value]) => `${name}: ${value}`)
+        .join('\n');
+    return formattedHeaders ? `${formattedHeaders}` : '(Headers unreadable)';
+}
+
 export function checkResponse<X extends HttpResponse<unknown>>(response: X): X {
     const url = response.url;
     if (!response.ok) {
         errorReporter(response, [url]);
-        throw new Error(`Data API error: response not ok: ${response.status}: ${response.statusText} (${url}`);
+        throw new Error(`Data API error: response not ok: ${response.status}: ${response.statusText} (${url})\n${formatHeaders(response.headers)}`);
     }
     else if (!response.data) {
         errorReporter(response, [url]);
-        throw new Error(`Data API error: no data: ${response.status}: ${response.statusText} (${url}`);
+        throw new Error(`Data API error: no data: ${response.status}: ${response.statusText} (${url})\n${formatHeaders(response.headers)}`);
     }
     return response;
 }

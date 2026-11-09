@@ -1,13 +1,13 @@
 import {
     ALL_SUB_STATS,
     bluWdfromInt,
+    DEFAULT_MATERIA_ACCEPTABLE_OVERCAP_LOSS,
     EMPTY_STATS,
     FAKE_MAIN_STATS,
     getLevelStats,
     getRaceStats,
     JobName,
     MAIN_STATS,
-    DEFAULT_MATERIA_ACCEPTABLE_OVERCAP_LOSS,
     MateriaSubstat,
     NORMAL_GCD,
     RaceName,
@@ -28,10 +28,10 @@ import {
     GearSetResult,
     JobData,
     Materia,
-    MedicineItem,
     MateriaAutoFillController,
     MateriaAutoFillPrio,
     MateriaMemoryExport,
+    MedicineItem,
     MeldableMateriaSlot,
     NO_SYNC_STATS,
     RawStatKey,
@@ -41,11 +41,13 @@ import {
     SetDisplaySettingsExport,
     SlotMateriaMemoryExport
 } from "@xivgear/xivmath/geartypes";
+
 import {Inactivitytimer} from "@xivgear/util/inactivitytimer";
 import {addStats, finalizeStats, finalizeStatsInt, getBaseMainStat} from "@xivgear/xivmath/xivstats";
 import {GearPlanSheet} from "./sheet";
 import {isMateriaAllowed} from "./materia/materia_utils";
 
+const ALL_ITEM_BONUS_STATS = [...MAIN_STATS, ...ALL_SUB_STATS];
 
 export function nonEmptyRelicStats(stats: RelicStats | undefined): boolean {
     return (stats && !Object.values(stats).every(val => !val)) ?? false;
@@ -195,6 +197,12 @@ export class SetDisplaySettings {
     }
 }
 
+/**
+ * @deprecated Use {@link CharacterGearSet#getEquipStatDetail} instead, which properly handles things like extra
+ * main or secondary stats.
+ * @param item
+ * @param stat
+ */
 export function previewItemStatDetail(item: GearItem, stat: RawStatKey): ItemSingleStatDetail {
     const cap = item.statCaps[stat]!;
     if (item.isSyncedDown) {
@@ -239,6 +247,7 @@ type GearSetCheckpoint = {
     equipment: EquipmentSet;
     food: FoodItem | undefined;
     medicine: MedicineItem | undefined;
+    specialistBonusEnabled: boolean;
     jobOverride: JobName | null;
     name: string;
     description: string | undefined;
@@ -265,6 +274,7 @@ export class CharacterGearSet {
     private _raceOverride: RaceName | null = null;
     private _food: FoodItem | undefined;
     private _medicine: MedicineItem | undefined;
+    private _specialistBonusEnabled: boolean = false;
     private readonly _sheet: GearPlanSheet;
     private readonly refresher = new Inactivitytimer(0, () => {
         this._notifyListeners();
@@ -330,6 +340,27 @@ export class CharacterGearSet {
     }
 
     /**
+     * Like {@link medicine}, but will try to auto-select a medicine item if none is selected.
+     */
+    get medicineForSim(): MedicineItem | undefined {
+        if (this._medicine) {
+            return this._medicine;
+        }
+
+        // Nothing explicitly selected
+        let best: MedicineItem | undefined;
+        for (const medicine of this.sheet.allMedicineItems) {
+            if (!this.isStatRelevant(medicine.primaryStat) && !this.isStatRelevant(medicine.secondaryStat)) {
+                continue;
+            }
+            if (!best || medicine.ilvl > best.ilvl) {
+                best = medicine;
+            }
+        }
+        return best;
+    }
+
+    /**
      * The sheet of which this set is a member.
      */
     get sheet(): GearPlanSheet {
@@ -348,6 +379,18 @@ export class CharacterGearSet {
 
     set medicine(medicine: MedicineItem | undefined) {
         this._medicine = medicine;
+        this.forceRecalc();
+    }
+
+    get specialistBonusEnabled(): boolean {
+        return this._specialistBonusEnabled;
+    }
+
+    set specialistBonusEnabled(enabled: boolean) {
+        if (this._specialistBonusEnabled === enabled) {
+            return;
+        }
+        this._specialistBonusEnabled = enabled;
         this.forceRecalc();
     }
 
@@ -627,6 +670,14 @@ export class CharacterGearSet {
             }
         }
 
+        if (classJobStats.type === 'DoH' && this._specialistBonusEnabled) {
+            addStats(combinedStats, {
+                craftsmanship: 20,
+                control: 20,
+                cp: 15,
+            });
+        }
+
         // Intelligence stat from gear only (no modifiers) for BLU
         const gearIntStat = combinedStats.intelligence;
 
@@ -647,6 +698,9 @@ export class CharacterGearSet {
         this._dirtyComp = false;
         // Add BLU weapon damage modifier
         combinedStats.wdMag += classJob === "BLU" ? bluWdfromInt(gearIntStat) : 0;
+        // Since DoH/DoL have long-duration potions, it is reasonable to include them in the real stats.
+        // However, combat job potions have short durations, so simulations decide if and when to use them.
+        const medicineBonuses = classJobStats.type === 'Combat' ? {} : this._medicine?.bonuses ?? {};
         const computedStats = finalizeStats(
             combinedStats,
             this._food?.bonuses ?? {},
@@ -656,7 +710,7 @@ export class CharacterGearSet {
             classJobStats,
             this._sheet.partyBonus,
             raceStats,
-            this._medicine?.bonuses ?? {}
+            medicineBonuses
         );
         const leftRing = this.getItemInSlot('RingLeft');
         const rightRing = this.getItemInSlot('RingRight');
@@ -745,9 +799,12 @@ export class CharacterGearSet {
                 issues: [],
             };
         }
+        // Start with the raw stats of the item
         const itemStats = new RawStats(equip.gearItem.stats);
         // Note for future: if we ever get an item that has both custom stats AND materia, this logic will need to be extended.
-        for (const stat of ALL_SUB_STATS) {
+
+        for (const statRaw of Object.keys(itemStats)) {
+            const stat = statRaw as RawStatKey;
             const statDetail = this.getStatDetail(slotId, stat);
             itemStats[stat] = statDetail.effectiveAmount;
             if (statDetail.mode === 'melded-overcapped-major') {
@@ -786,7 +843,7 @@ export class CharacterGearSet {
      * @param stat
      * @param materiaOverride
      */
-    getStatDetail(slotId: keyof EquipmentSet, stat: RawStatKey, materiaOverride?: Materia[]): ReturnType<CharacterGearSet['getEquipStatDetail']> {
+    getStatDetail(slotId: keyof EquipmentSet, stat: RawStatKey, materiaOverride?: Materia[]): ItemSingleStatDetail {
         const equip = this.equipment[slotId];
         return this.getEquipStatDetail(equip, stat, materiaOverride);
     }
@@ -808,28 +865,56 @@ export class CharacterGearSet {
                 cap: 0,
             };
         }
-        const stats = new RawStats(gearItem.stats);
+        const itemStats = new RawStats(gearItem.stats);
         if (equip.relicStats) {
             const relicStats = new RawStats(equip.relicStats);
-            addStats(stats, relicStats);
+            addStats(itemStats, relicStats);
         }
+        let extraKey: RawStatKey | null;
+        if (stat === this.classJobStats.mainStat) {
+            extraKey = 'extraMainStat';
+        }
+        else if (stat === this.classJobStats.secondaryStat) {
+            extraKey = 'extraSecondaryStat';
+        }
+        // Since we fold the stats in this function, we shouldn't return a potentially misleading value for these
+        else if (stat === 'extraMainStat' || stat === 'extraSecondaryStat') {
+            return {
+                mode: 'unmelded',
+                overcapAmount: 0,
+                effectiveAmount: 0,
+                fullAmount: 0,
+                cap: 0,
+            };
+        }
+        else {
+            extraKey = null;
+        }
+        // We don't actually care about the cap on extraMain/Secondary itself because we
+        // are re-applying the cap on the stat it is actually going to become.
+        let extra = extraKey !== null ? gearItem.unsyncedVersion.stats[extraKey] : 0;
+        // Apply the real stat cap to the extra amount
+        const cap = gearItem.statCaps[stat] ?? 9999;
+        if (gearItem.isSyncedDown && extra > cap) {
+            extra = cap;
+        }
+        const baseStatValue = itemStats[stat] + extra;
         if (gearItem.isSyncedDown) {
+            // TODO: this branch is not covered
             if (gearItem.isCustomRelic) {
-                const cap = gearItem.statCaps[stat];
-                const current = stats[stat];
-                if (cap && current > cap) {
+                if (cap && baseStatValue > cap) {
                     return {
                         effectiveAmount: cap,
-                        fullAmount: current,
-                        overcapAmount: current - cap,
+                        fullAmount: baseStatValue,
+                        overcapAmount: baseStatValue - cap,
                         cap: cap,
                         mode: "synced-down",
                     };
                 }
                 else {
                     return {
-                        effectiveAmount: current,
-                        fullAmount: current,
+                        effectiveAmount: baseStatValue,
+                        fullAmount: baseStatValue,
                         overcapAmount: 0,
                         cap: cap,
                         mode: 'unmelded',
@@ -837,8 +922,9 @@ export class CharacterGearSet {
                 }
             }
             else {
-                const unsynced = gearItem.unsyncedVersion.stats[stat];
-                const synced = stats[stat];
+                const unsyncedStats = gearItem.unsyncedVersion.stats;
+                const unsynced = unsyncedStats[stat] + (extraKey !== null ? unsyncedStats[extraKey] : 0);
+                const synced = baseStatValue;
                 if (synced < unsynced) {
                     return {
                         effectiveAmount: synced,
@@ -859,9 +945,7 @@ export class CharacterGearSet {
                 }
             }
         }
-        const cap = gearItem.statCaps[stat] ?? 9999;
-        const baseItemStatValue = stats[stat];
-        let meldedStatValue = baseItemStatValue;
+        let meldedStatValue = baseStatValue;
         let smallestMateria = 999999;
         const materiaList = materiaOverride === undefined ? equip.melds.map(meld => meld.equippedMateria).filter(item => item) : materiaOverride.filter(item => item);
         for (const materia of materiaList) {
@@ -872,7 +956,7 @@ export class CharacterGearSet {
             }
         }
         // Not melded or melds are not relevant to this stat
-        if (meldedStatValue === baseItemStatValue) {
+        if (meldedStatValue === baseStatValue) {
             return {
                 mode: 'unmelded',
                 overcapAmount: 0,
@@ -902,6 +986,7 @@ export class CharacterGearSet {
             };
         }
         else {
+            // TODO: this branch is not covered
             return {
                 effectiveAmount: cap,
                 fullAmount: meldedStatValue,
@@ -1003,8 +1088,8 @@ export class CharacterGearSet {
      * Whether a stat is relevant to this set.
      * @param stat
      */
-    isStatRelevant(stat: RawStatKey) {
-        return this._sheet.isStatRelevant(stat);
+    isStatRelevant(stat: RawStatKey | undefined) {
+        return this._sheet.isStatRelevant(stat, this.job);
     }
 
     /**
@@ -1056,6 +1141,7 @@ export class CharacterGearSet {
             equipment: cloneEquipmentSet(this.equipment),
             food: this._food,
             medicine: this._medicine,
+            specialistBonusEnabled: this._specialistBonusEnabled,
             jobOverride: this._jobOverride,
             name: this._name,
             description: this._description,
@@ -1121,6 +1207,7 @@ export class CharacterGearSet {
         Object.assign(this.equipment, newEquipment);
         this._food = checkpoint.food;
         this._medicine = checkpoint.medicine;
+        this._specialistBonusEnabled = checkpoint.specialistBonusEnabled;
         this._name = checkpoint.name;
         this._description = checkpoint.description;
         if (checkpoint.jobOverride !== this._jobOverride) {
@@ -1283,6 +1370,73 @@ export class CharacterGearSet {
             if (otherItem.isUnique && otherItem.displayGearSlotName === 'Ring') {
                 if (this.equipment['RingLeft']?.gearItem.id === otherItem.id
                     || this.equipment['RingRight']?.gearItem.id === otherItem.id) {
+                    return false;
+                }
+            }
+            return true;
+        });
+    }
+
+    /**
+     * Get food items that could replace the given food - either identical in terms of effective stats, or strictly
+     * better with the exception that sps/sks must match exactly. Since food provides % bonuses, this considers the
+     * actual amount it would give. Note that this means that unlike gear, this result may depend on other slots,
+     * i.e. changing a different gear slot may result in a change in what food is considered equivalent.
+     *
+     * @param thisFood
+     */
+    getAltFoodFor(thisFood: FoodItem): FoodItem[] {
+        return this.sheet.allFoodItems.filter(thatFood => {
+            // Cannot be the same food item
+            if (thisFood.id === thatFood.id) {
+                return false;
+            }
+            const thisBonuses = this.getEffectiveFoodBonuses(thisFood);
+            const thatBonuses = this.getEffectiveFoodBonuses(thatFood);
+            for (const stat of ALL_ITEM_BONUS_STATS) {
+                const thisValue = thisBonuses[stat];
+                const thatValue = thatBonuses[stat];
+                if (stat === 'skillspeed' || stat === 'spellspeed') {
+                    // sks/sps requires exact equality
+                    if (thisValue !== thatValue) {
+                        return false;
+                    }
+                }
+                else {
+                    // other stats only require greater than or equal
+                    if (thisValue > thatValue) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        });
+    }
+
+    /**
+     * Get medicine items with equivalent or better effective bonuses than the given medicine. Skill and spell speed
+     * must match exactly, while other stats may be higher. Medicine bonuses depend on the current gear and food.
+     */
+    getAltMedicineFor(thisMedicine: MedicineItem): MedicineItem[] {
+        const thisBonuses = this.getEffectiveMedicineBonuses(thisMedicine);
+        const hasRelevantStats = (medicine: MedicineItem) =>
+            (medicine.primaryStat !== 'vitality' && this.isStatRelevant(medicine.primaryStat))
+            || (medicine.secondaryStat !== 'vitality' && this.isStatRelevant(medicine.secondaryStat));
+
+        return this.sheet.allMedicineItems.filter(thatMedicine => {
+            if (thisMedicine.id === thatMedicine.id || !hasRelevantStats(thatMedicine)) {
+                return false;
+            }
+            const thatBonuses = this.getEffectiveMedicineBonuses(thatMedicine);
+            for (const stat of ALL_ITEM_BONUS_STATS) {
+                const thisValue = thisBonuses[stat];
+                const thatValue = thatBonuses[stat];
+                if (stat === 'skillspeed' || stat === 'spellspeed') {
+                    if (thisValue !== thatValue) {
+                        return false;
+                    }
+                }
+                else if (thisValue > thatValue) {
                     return false;
                 }
             }

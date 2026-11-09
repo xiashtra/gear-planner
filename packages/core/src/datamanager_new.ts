@@ -1,5 +1,4 @@
 import {
-    getClassJobStats,
     JOB_DATA,
     JobName,
     LEVEL_ITEMS,
@@ -21,11 +20,11 @@ import {
     FoodItem,
     GearAcquisitionSource,
     GearItem,
-    IlvlSyncInfo,
+    IlvlSyncInfo, ItemQuality,
     JobMultipliers,
     Materia,
-    MedicineItem,
     MateriaSlot,
+    MedicineItem,
     OccGearSlotKey,
     RawStatKey,
     RawStats,
@@ -43,10 +42,18 @@ import {
 import {BaseParamMap, DataManager, DmJobs} from "./datamanager";
 import {applyStatCaps} from "./gear";
 import {toTranslatable, TranslatableString} from "@xivgear/i18n/translation";
-import {ApiFoodData, ApiItemData, ApiMateriaData, ApiMedicineData, checkResponse, DATA_API_CLIENT} from "./data_api_client";
+import {
+    ApiFoodData,
+    ApiItemData,
+    ApiMateriaData,
+    ApiMedicineData,
+    checkResponse,
+    DATA_API_CLIENT
+} from "./data_api_client";
 import {addStats} from "@xivgear/xivmath/xivstats";
 import {arrayEqTyped} from "@xivgear/util/array_utils";
 import {xivApiIconUrl} from "./external/xivapi";
+import {statCapNoJob, statCapWithJob} from "@xivgear/xivmath/xivmath";
 
 export class NewApiDataManager implements DataManager {
 
@@ -57,12 +64,13 @@ export class NewApiDataManager implements DataManager {
     private readonly _classJob: JobName;
     private readonly _allJobs: JobName[];
     private readonly _level: SupportedLevel;
+    private readonly _specificItems: Set<number>;
     private readonly _ilvlSync: number | undefined;
     private readonly apiClient: DataApiClient<never>;
     private readonly minEquipIlvl: number;
     private readonly minEquipLvl: SupportedLevel;
 
-    public constructor(classJobs: DmJobs, level: SupportedLevel, ilvlSync?: number | undefined) {
+    public constructor(classJobs: DmJobs, level: SupportedLevel, ilvlSync?: number | undefined, specificItems?: Set<number>) {
         this._classJob = classJobs[0];
         this._allJobs = [...classJobs];
         this._level = level;
@@ -72,6 +80,7 @@ export class NewApiDataManager implements DataManager {
         this._minIlvlFood = lvlData.minILvlFood;
         this._maxIlvlFood = lvlData.maxILvlFood;
         this._ilvlSync = ilvlSync;
+        this._specificItems = specificItems;
         this.apiClient = DATA_API_CLIENT;
         this.minEquipLvl = Math.min(...classJobs.map(job => JOB_DATA[job].minLevel)) as SupportedLevel;
         this.minEquipIlvl = LEVEL_ITEMS[this.minEquipLvl].minILvl;
@@ -102,117 +111,97 @@ export class NewApiDataManager implements DataManager {
         if (this._isyncPromise === undefined) {
             this._isyncPromise = Promise.all([baseParamPromise, this.apiClient.itemLevel.itemLevels()]).then(responses => {
                 const outMap = new Map<number, IlvlSyncInfo>();
-                // This is the constant data from xivconstants.ts
-                const jobStats = getClassJobStats(this._classJob);
                 // Iterate over rows in ItemLevel table
                 for (const row of checkResponse(responses[1]).data!.items!) {
                     const ilvl = row.rowId!;
                     // Unroll the ItemLevel object into a direct mapping from RawStatKey => modifier
                     // BaseParam data is trickier. First, we need to convert from a list to a map, where the keys are the stat.
                     const baseParams = this._baseParams!;
+                    const getIlvlModifier = (statsKey: RawStatKey): number | undefined => {
+                        switch (statsKey) {
+                            case "hp":
+                                return row.HP;
+                            case "vitality":
+                                return row.vitality;
+                            case "strength":
+                                return row.strength;
+                            case "dexterity":
+                                return row.dexterity;
+                            case "intelligence":
+                                return row.intelligence;
+                            case "mind":
+                                return row.mind;
+                            case "piety":
+                                return row.piety;
+                            case "crit":
+                                return row.criticalHit;
+                            case "dhit":
+                                return row.directHitRate;
+                            case "determination":
+                                return row.determination;
+                            case "tenacity":
+                                return row.tenacity;
+                            case "spellspeed":
+                                return row.spellSpeed;
+                            case "skillspeed":
+                                return row.skillSpeed;
+                            case "wdPhys":
+                                return row.physicalDamage;
+                            case "wdMag":
+                                return row.magicalDamage;
+                            case "weaponDelay":
+                                return row.delay;
+                            case "defensePhys":
+                                return row.defense;
+                            case "defenseMag":
+                                return row.magicDefense;
+                            case "gearHaste":
+                                // Don't bother capping haste since it doesn't work like a normal stat.
+                                return null;
+                            case "extraMainStat":
+                                // Main stats should all be the same, but this uses mind like the cap calculation does.
+                                return row.mind;
+                            case "extraSecondaryStat":
+                                // Secondary stats should all be the same, but this uses direct hit like the cap calculation does.
+                                return row.directHitRate;
+                            case "cp":
+                                return row.CP;
+                            case "control":
+                                return row.control;
+                            case "craftsmanship":
+                                return row.craftsmanship;
+                            case "gp":
+                                return row.GP;
+                            case "gathering":
+                                return row.gathering;
+                            case "perception":
+                                return row.perception;
+                            default:
+                                console.warn(`Bad ilvl modifier! Stat: ${statsKey}`);
+                                return null;
+                        }
+                    };
                     outMap.set(ilvl, {
                         ilvl: ilvl,
-                        substatCap(slot: OccGearSlotKey, statsKey: RawStatKey): number {
-                            let ilvlModifier: number | undefined;
-                            switch (statsKey) {
-                                case "hp":
-                                    ilvlModifier = row.HP;
-                                    break;
-                                case "vitality":
-                                    ilvlModifier = row.vitality;
-                                    break;
-                                case "strength":
-                                    ilvlModifier = row.strength;
-                                    break;
-                                case "dexterity":
-                                    ilvlModifier = row.dexterity;
-                                    break;
-                                case "intelligence":
-                                    ilvlModifier = row.intelligence;
-                                    break;
-                                case "mind":
-                                    ilvlModifier = row.mind;
-                                    break;
-                                case "piety":
-                                    ilvlModifier = row.piety;
-                                    break;
-                                case "crit":
-                                    ilvlModifier = row.criticalHit;
-                                    break;
-                                case "dhit":
-                                    ilvlModifier = row.directHitRate;
-                                    break;
-                                case "determination":
-                                    ilvlModifier = row.determination;
-                                    break;
-                                case "tenacity":
-                                    ilvlModifier = row.tenacity;
-                                    break;
-                                case "spellspeed":
-                                    ilvlModifier = row.spellSpeed;
-                                    break;
-                                case "skillspeed":
-                                    ilvlModifier = row.skillSpeed;
-                                    break;
-                                case "wdPhys":
-                                    ilvlModifier = row.physicalDamage;
-                                    break;
-                                case "wdMag":
-                                    ilvlModifier = row.magicalDamage;
-                                    break;
-                                case "weaponDelay":
-                                    ilvlModifier = row.delay;
-                                    break;
-                                case "defensePhys":
-                                    ilvlModifier = row.defense;
-                                    break;
-                                case "defenseMag":
-                                    ilvlModifier = row.magicDefense;
-                                    break;
-                                case "gearHaste":
-                                    // Don't bother capping haste since it doesn't work like a normal stat.
-                                    return 999_999;
-                                case "extraMainStat":
-                                    // Main stats **should** all be the same
-                                    ilvlModifier = row.mind;
-                                    break;
-                                case "extraSecondaryStat":
-                                    // Secondary stats also should all be the same
-                                    ilvlModifier = row.directHitRate;
-                                    break;
-                                case "cp":
-                                    ilvlModifier = row.CP;
-                                    break;
-                                case "control":
-                                    ilvlModifier = row.control;
-                                    break;
-                                case "craftsmanship":
-                                    ilvlModifier = row.craftsmanship;
-                                    break;
-                                case "gp":
-                                    ilvlModifier = row.GP;
-                                    break;
-                                case "gathering":
-                                    ilvlModifier = row.gathering;
-                                    break;
-                                case "perception":
-                                    ilvlModifier = row.perception;
-                                    break;
-                                default:
-                                    console.warn(`Bad ilvl modifier! ${statsKey}:${slot}`);
-                                    ilvlModifier = undefined;
-                                    break;
-                            }
+                        getIlvlModifier,
+                        substatCap(slot: OccGearSlotKey, statsKey: RawStatKey, meldParamIndex: number | null): number | null {
+                            const ilvlModifier = getIlvlModifier(statsKey);
 
-                            function calcCap(slot: OccGearSlotKey): number {
+                            function calcCap(slot: OccGearSlotKey): number | null {
+                                if (ilvlModifier === null || ilvlModifier === 0) {
+                                    return null;
+                                }
                                 const bpInfo = baseParams[statsKey as RawStatKey];
-                                const baseParamModifier: number = bpInfo.slots[slot];
-                                const jobCap = bpInfo.meldParam[jobStats.meldParamIndex] / 100;
-                                if (jobCap !== undefined && ilvlModifier !== undefined) {
-                                    return Math.round(jobCap * Math.round(ilvlModifier * baseParamModifier / 1000));
+                                if (bpInfo === undefined) {
+                                    return null;
+                                }
+                                const baseParamSlotModifier: number = bpInfo.slots[slot];
+                                const meldParam = meldParamIndex === null ? 100 : bpInfo.meldParam[meldParamIndex];
+                                if (meldParam !== undefined && ilvlModifier !== undefined) {
+                                    return statCapWithJob(meldParam, ilvlModifier, baseParamSlotModifier);
                                 }
                                 else {
-                                    return Math.round(ilvlModifier * baseParamModifier / 1000);
+                                    return statCapNoJob(ilvlModifier, baseParamSlotModifier);
                                 }
                             }
 
@@ -226,16 +215,23 @@ export class NewApiDataManager implements DataManager {
                             // 2H cap and 1H cap and subtract them.
                             // However, this is not the case for all stats - e.g. Craftsmanship is OH% == 1h% == 2H% = 350.
                             // Gathering stats (excl. GP) are also weird, they have 350 for 2H, but then 350/200 or 200/350.
-                            if (slot === 'OffHand') {
+                            if (slot === 'OffHand' && ilvlModifier !== 0) {
                                 const bpInfo = baseParams[statsKey as RawStatKey];
-                                const oneCap: number = bpInfo.slots['Weapon1H'];
-                                const twoCap: number = bpInfo.slots['Weapon2H'];
-                                const ohCap: number = bpInfo.slots['OffHand'];
-                                // Combat stats = 1H + OH == 2H
-                                if (oneCap + ohCap === twoCap) {
-                                    return calcCap('Weapon2H') - calcCap('Weapon1H');
+                                if (bpInfo !== undefined) {
+                                    const oneCap: number = bpInfo.slots['Weapon1H'];
+                                    const twoCap: number = bpInfo.slots['Weapon2H'];
+                                    const ohCap: number = bpInfo.slots['OffHand'];
+                                    // Combat stats = 1H + OH == 2H
+                                    if (oneCap + ohCap === twoCap) {
+                                        const h2 = calcCap('Weapon2H');
+                                        const h1 = calcCap('Weapon1H');
+                                        if (h2 === null || h1 === null) {
+                                            return null;
+                                        }
+                                        return h2 - h1;
+                                    }
+                                    // Other stats - just go with OH cap
                                 }
-                                // Other stats - just go with OH cap
                             }
                             return calcCap(slot);
                         },
@@ -316,15 +312,19 @@ export class NewApiDataManager implements DataManager {
             return response;
         });
         const extraPromises: Promise<unknown>[] = [];
+
         console.log("Loading items");
-
-
-        const itemsPromise = this.apiClient.items.items({job: this._allJobs})
+        const itemsQuery: Parameters<typeof this.apiClient.items.items>[0] = {job: this._allJobs};
+        if (this._specificItems !== undefined) {
+            itemsQuery.itemIds = Array.from(this._specificItems.values());
+        }
+        const itemsPromise = this.apiClient.items.items(itemsQuery)
             .then(async (response) => {
                 checkResponse(response);
                 console.log(`Got ${response.data.items.length} Items`);
-                return response.data.items;
-            }).then((rawItems) => {
+                return response.data;
+            }).then((data) => {
+                const rawItems = data.items;
                 this._allItems = rawItems
                     .filter(i => {
                         try {
@@ -375,18 +375,14 @@ export class NewApiDataManager implements DataManager {
                         return true;
 
                     });
-                this._maxIlvlForEquipLevel = new Map();
-                this._maxIlvlForEquipLevelWeapon = new Map();
-                this._allItems.forEach(item => {
-                    // Track maximum ilvl seen for a particular equip level
-                    if (item.displayGearSlotName === 'Weapon' || item.displayGearSlotName === 'OffHand') {
-                        this._maxIlvlForEquipLevelWeapon.set(item.equipLvl, Math.max(item.ilvl, this._maxIlvlForEquipLevelWeapon.get(item.equipLvl) ?? 0));
-                    }
-                    else {
-                        this._maxIlvlForEquipLevel.set(item.equipLvl, Math.max(item.ilvl, this._maxIlvlForEquipLevel.get(item.equipLvl) ?? 0));
-                    }
-                });
-                // TODO: put up better error
+                const maxIlvlMap = this._maxIlvlForEquipLevel = new Map();
+                const maxIlvlWpnMap = this._maxIlvlForEquipLevelWeapon = new Map();
+                for (let i = 0; i < data.maxIlvlPerLvl.length; i++) {
+                    maxIlvlMap.set(i, data.maxIlvlPerLvl[i]);
+                }
+                for (let i = 0; i < data.maxIlvlPerLvlWpn.length; i++) {
+                    maxIlvlWpnMap.set(i, data.maxIlvlPerLvlWpn[i]);
+                }
             });
         const statsPromise = Promise.all([itemsPromise, baseParamPromise]).then(() => {
             console.log(`Finishing item calculations for ${this._allItems.length} items`);
@@ -398,6 +394,9 @@ export class NewApiDataManager implements DataManager {
                 if (this._ilvlSync && this._ilvlSync < item.ilvl) {
                     isyncLvl = this._ilvlSync;
                 }
+                // If no explicit ilvl sync is specified, but the sheet level is less than the item's level, then
+                // sync to the max ilvl for a gear piece of that level. This theoretically corresponds to
+                // ParamGrow.ItemLevelSync.
                 else if (this._level < item.equipLvl) { // Downsync by equip lvl, infer correct ilvl
                     isyncLvl = this._maxIlvlForEquipLevel.get(this._level);
                 }
@@ -446,17 +445,14 @@ export class NewApiDataManager implements DataManager {
             })
             .then((processedFoods) => processedFoods.filter(food => Object.keys(food.bonuses).length > 1))
             .then((foods) => this._allFoodItems = foods);
-        const hasNonCombatJob = this._allJobs.some(job => JOB_DATA[job].type !== 'Combat');
-        const medicinePromise = hasNonCombatJob
-            ? this.apiClient.medicine.foodItems1()
-                .then((response) => {
-                    checkResponse(response);
-                    console.log(`Got ${response.data.items.length} Medicine Items`);
-                    return response.data.items;
-                })
-                .then(rawMedicine => rawMedicine.map(item => new DataApiMedicineInfo(item)))
-                .then(medicine => this._allMedicineItems = medicine)
-            : Promise.resolve(this._allMedicineItems = []);
+        const medicinePromise = this.apiClient.medicine.medicineItems()
+            .then((response) => {
+                checkResponse(response);
+                console.log(`Got ${response.data.items.length} Medicine Items`);
+                return response.data.items;
+            })
+            .then(rawMedicine => rawMedicine.map(item => new DataApiMedicineInfo(item)))
+            .then(medicine => this._allMedicineItems = medicine);
         console.log("Loading jobs");
         const jobsPromise = this.apiClient.jobs.jobs()
             .then(response => {
@@ -685,9 +681,7 @@ export class DataApiGearInfo implements GearItem {
     unsyncedVersion: DataApiGearInfo;
     readonly acquisitionType: GearAcquisitionSource;
     readonly jobs: JobName[];
-    statCaps: {
-        [K in RawStatKey]?: number
-    };
+    statCaps: RawStatsPart;
     isSyncedDown: boolean;
     relicStatModel: RelicStatModel;
     syncedDownTo: number | null;
@@ -700,6 +694,8 @@ export class DataApiGearInfo implements GearItem {
     // Actual effective stats
     stats: RawStats;
     readonly slotMapping: DataApiEquipSlotMap;
+    readonly meldParamIndex: number;
+    readonly quality: ItemQuality;
 
     constructor(data: ApiItemData, forceNq: boolean = false) {
         this.jobs = data.classJobs as JobName[];
@@ -712,6 +708,12 @@ export class DataApiGearInfo implements GearItem {
         else {
             this.name = data.name;
             this.nameTranslation = toTranslatable(data.name, data.nameTranslations);
+        }
+        if (data.canBeHq) {
+            this.quality = forceNq ? 'nq' : 'hq';
+        }
+        else {
+            this.quality = 'none';
         }
         this.equipLvl = data.equipLevel;
         this.ilvl = data.ilvl;
@@ -886,6 +888,7 @@ export class DataApiGearInfo implements GearItem {
                 break;
         }
         this.rarity = data.rarity;
+        this.meldParamIndex = data.meldParamIndex;
         this.recalcEffectiveStats();
     }
 
@@ -931,7 +934,10 @@ export class DataApiGearInfo implements GearItem {
         const statCapsNative: RawStatsPart = {};
         Object.entries(this.baseStats).forEach(([stat, _]) => {
             const rsk = stat as RawStatKey;
-            statCapsNative[rsk] = nativeIlvlInfo.substatCap(this.occGearSlotName, rsk);
+            const cap = nativeIlvlInfo.substatCap(this.occGearSlotName, rsk, this.meldParamIndex);
+            if (cap !== null) {
+                statCapsNative[rsk] = cap;
+            }
         });
         this.statCaps = statCapsNative;
         if (syncIlvlInfo && (syncIlvlInfo.ilvl < this.ilvl || level < this.equipLvl)) {
@@ -943,7 +949,7 @@ export class DataApiGearInfo implements GearItem {
             const statCapsSync: RawStatsPart = {};
             Object.entries(this.baseStats).forEach(([stat, v]) => {
                 const rsk = stat as RawStatKey;
-                statCapsSync[rsk] = syncIlvlInfo.substatCap(this.occGearSlotName, rsk);
+                statCapsSync[rsk] = syncIlvlInfo.substatCap(this.occGearSlotName, rsk, this.meldParamIndex);
             });
             this.baseStats = applyStatCaps(this.baseStats, statCapsSync);
             this.statCaps = statCapsSync;
@@ -996,8 +1002,10 @@ export class DataApiFoodInfo implements FoodItem {
     name: string;
     readonly nameTranslation: TranslatableString;
     ilvl: number;
-    primarySubStat: RawStatKey | undefined;
-    secondarySubStat: RawStatKey | undefined;
+    primaryStat: RawStatKey | undefined;
+    secondaryStat: RawStatKey | undefined;
+    // We only deal with HQ food
+    readonly quality: ItemQuality = 'hq';
 
     constructor(data: ApiFoodData) {
         this.id = requireNumber(data.rowId);
@@ -1014,10 +1022,10 @@ export class DataApiFoodInfo implements FoodItem {
         }
         const sortedStats = Object.entries(this.bonuses).sort((entryA, entryB) => entryB[1].max - entryA[1].max).map(entry => entry[0] as RawStatKey).filter(stat => stat !== 'vitality');
         if (sortedStats.length >= 1) {
-            this.primarySubStat = sortedStats[0];
+            this.primaryStat = sortedStats[0];
         }
         if (sortedStats.length >= 2) {
-            this.secondarySubStat = sortedStats[1];
+            this.secondaryStat = sortedStats[1];
         }
     }
 }
@@ -1034,8 +1042,10 @@ export class DataApiMedicineInfo implements MedicineItem {
     name: string;
     readonly nameTranslation: TranslatableString;
     ilvl: number;
-    primarySubStat: RawStatKey | undefined;
-    secondarySubStat: RawStatKey | undefined;
+    primaryStat: RawStatKey | undefined;
+    secondaryStat: RawStatKey | undefined;
+    // We only deal with HQ medicine
+    readonly quality: ItemQuality = 'hq';
 
     constructor(data: ApiMedicineData) {
         this.id = requireNumber(data.rowId);
@@ -1052,10 +1062,10 @@ export class DataApiMedicineInfo implements MedicineItem {
         }
         const sortedStats = Object.entries(this.bonuses).sort((entryA, entryB) => entryB[1].max - entryA[1].max).map(entry => entry[0] as RawStatKey).filter(stat => stat !== 'vitality');
         if (sortedStats.length >= 1) {
-            this.primarySubStat = sortedStats[0];
+            this.primaryStat = sortedStats[0];
         }
         if (sortedStats.length >= 2) {
-            this.secondarySubStat = sortedStats[1];
+            this.secondaryStat = sortedStats[1];
         }
     }
 }
@@ -1085,6 +1095,7 @@ export function processRawMateriaInfo(data: ApiMateriaData): Materia[] {
             materiaGrade: grade,
             isHighGrade: (grade % 2) === 0 && grade >= 6,
             ilvl: itemData.ilvl ?? 0,
+            quality: 'none',
         });
     }
     return out;

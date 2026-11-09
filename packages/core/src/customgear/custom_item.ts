@@ -8,7 +8,7 @@ import {
     EquipSlotValue,
     GearAcquisitionSource,
     GearItem,
-    IlvlSyncInfo,
+    IlvlSyncInfo, ItemQuality,
     MateriaSlot,
     NormalOccGearSlotKey,
     RawStatKey,
@@ -76,12 +76,14 @@ export class CustomItem implements GearItem {
 
     primarySubstat: keyof RawStats = null;
     secondarySubstat: keyof RawStats = null;
-    statCaps: Partial<RawStats> = {};
+    statCaps: RawStatsPart = {};
     // TODO: pull this out into a constant somewhere
-    iconUrl: URL = new URL(xivApiIconUrl(26270));
     syncedDownTo: number | null;
     private _data: CustomItemExport;
     readonly slotMapping: EquipSlotMap;
+
+    readonly iconUrl: URL = new URL(xivApiIconUrl(26270));
+    readonly quality: ItemQuality = 'none';
 
     private constructor(exportedData: CustomItemExport, private readonly sheet: GearPlanSheet, private readonly isUnsyncCopy: boolean = false) {
         this._data = exportedData;
@@ -249,14 +251,14 @@ export class CustomItem implements GearItem {
         if (this.respectCaps && nativeIlvlInfo) {
             const statCapsNative: RawStatsPart = {};
             Object.entries(this.stats).forEach(([stat, _]) => {
-                statCapsNative[stat as RawStatKey] = nativeIlvlInfo.substatCap(this.occGearSlotName, stat as RawStatKey);
+                statCapsNative[stat as RawStatKey] = nativeIlvlInfo.substatCap(this.occGearSlotName, stat as RawStatKey, null);
             });
             this.statCaps = statCapsNative;
             if (syncIlvlInfo && syncIlvlInfo.ilvl < this.ilvl) {
                 this.unsyncedVersion = new CustomItem({...this._data}, this.sheet, true);
                 const statCapsSync: RawStatsPart = {};
                 Object.entries(this.stats).forEach(([stat, v]) => {
-                    statCapsSync[stat as RawStatKey] = syncIlvlInfo.substatCap(this.occGearSlotName, stat as RawStatKey);
+                    statCapsSync[stat as RawStatKey] = syncIlvlInfo.substatCap(this.occGearSlotName, stat as RawStatKey, null);
                 });
                 this.statCaps = statCapsSync;
                 this.isSyncedDown = true;

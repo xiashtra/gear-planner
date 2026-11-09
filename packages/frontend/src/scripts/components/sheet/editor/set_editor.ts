@@ -1,5 +1,5 @@
 import {CharacterGearSet} from "@xivgear/core/gear";
-import {FoodItemsTable, GearItemsTable, MedicineItemsTable} from "./items";
+import {FoodItemsTable, GearItemsTable, MedicineItemsTable, SpecialistBonusTable} from "./items";
 import {ExpandableText} from "@xivgear/common-ui/components/expandy_text";
 import {stringToParagraphs} from "../../../util/text_utils";
 import {iconForIssues, SetIssuesModal} from "../gear_set_issues";
@@ -25,6 +25,7 @@ export class GearSetEditor extends HTMLElement {
     private issuesButtonContent: HTMLSpanElement;
     private foodTable: FoodItemsTable;
     private medicineTable: MedicineItemsTable | undefined;
+    private specialistBonusTable: SpecialistBonusTable | null = null;
 
     constructor(sheet: GearPlanSheetGui, gearSet: CharacterGearSet) {
         super();
@@ -145,35 +146,32 @@ export class GearSetEditor extends HTMLElement {
             rightSideDiv.appendChild(table);
             this.gearTables.push(table);
         }
-        // const leftSideTable = new GearItemsTable(this.sheet, this.gearSet, itemMapping, ['Head', 'Body', 'Hand', 'Legs', 'Feet']);
-        // const rightSideTable = new GearItemsTable(this.sheet, this.gearSet, itemMapping, ['Ears', 'Neck', 'Wrist', 'RingLeft', 'RingRight']);
 
-        const gearTableSet = document.createElement('div');
         weaponTable.classList.add('weapon-table');
-        gearTableSet.classList.add('gear-table-sides-holder');
         leftSideDiv.classList.add('left-side-gear-table');
         rightSideDiv.classList.add('right-side-gear-table');
 
-        gearTableSet.appendChild(leftSideDiv);
-        gearTableSet.appendChild(rightSideDiv);
         this.appendChild(weaponTable);
+        const gearTableSet = el('div', {class: 'gear-table-sides-holder'}, [leftSideDiv, rightSideDiv]);
         this.appendChild(gearTableSet);
-        // this.appendChild(rightSideDiv);
-
-        // // Gear table
-        // const gearTable = new GearItemsTable(sheet, gearSet, itemMapping);
-        // // gearTable.id = "gear-items-table";
-        // this.appendChild(gearTable);
 
         // Food table
         this.foodTable = new FoodItemsTable(this.sheet, this.gearSet);
         this.foodTable.classList.add('food-table');
         // foodTable.id = "food-items-table";
-        this.appendChild(this.foodTable);
-        if (this.gearSet.classJobStats.type !== 'Combat') {
-            this.medicineTable = new MedicineItemsTable(this.sheet, this.gearSet);
-            this.appendChild(this.medicineTable);
+        const foodTableSide = el('div', {class: 'food-medicine-table-side'}, [this.foodTable]);
+
+        this.medicineTable = new MedicineItemsTable(this.sheet, this.gearSet);
+        const medicineTableSide = el('div', {class: 'food-medicine-table-side'}, [this.medicineTable]);
+        const foodMedicineTableSet = el('div', {class: 'gear-table-sides-holder'}, [foodTableSide, medicineTableSide]);
+
+        this.appendChild(foodMedicineTableSet);
+
+        if (this.gearSet.classJobStats.type === 'DoH') {
+            this.specialistBonusTable = new SpecialistBonusTable(this.gearSet);
+            this.appendChild(this.specialistBonusTable);
         }
+
         this.checkIssues();
     }
 
@@ -190,6 +188,7 @@ export class GearSetEditor extends HTMLElement {
         this.checkIssues();
         this.foodTable.refreshFull();
         this.medicineTable?.refreshFull();
+        this.specialistBonusTable?.refresh();
     }
 
     private undoRedoHotkeyHandler = (ev: KeyboardEvent) => {

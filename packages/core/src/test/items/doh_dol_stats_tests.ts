@@ -20,10 +20,10 @@ const testMedicine = {
     },
 };
 let medicineRequestCount = 0;
-const originalMedicineItems = DATA_API_CLIENT.medicine.foodItems1;
+const originalMedicineItems = DATA_API_CLIENT.medicine.medicineItems;
 
 before(() => {
-    DATA_API_CLIENT.medicine.foodItems1 = async () => {
+    DATA_API_CLIENT.medicine.medicineItems = async () => {
         medicineRequestCount++;
         return {
             ok: true,
@@ -33,7 +33,7 @@ before(() => {
 });
 
 after(() => {
-    DATA_API_CLIENT.medicine.foodItems1 = originalMedicineItems;
+    DATA_API_CLIENT.medicine.medicineItems = originalMedicineItems;
 });
 
 describe('DoH stats tests', () => {
@@ -120,6 +120,32 @@ describe('DoH stats tests', () => {
         expect(medicine).to.not.be.undefined;
         expect(medicine.id).to.equal(testMedicine.rowId);
         expect(sheet.medicineById(medicine.id)).to.equal(medicine);
+    });
+
+    it('auto-selects the highest ilvl relevant medicine for simulation unless one is selected', () => {
+        const medicines = sheet.allMedicineItems;
+        const originalLength = medicines.length;
+        const relevantMedicine = medicines[0];
+        const higherRelevantMedicine = {...relevantMedicine, id: relevantMedicine.id + 1, ilvl: relevantMedicine.ilvl + 1};
+        const higherIrrelevantMedicine = {
+            ...relevantMedicine,
+            id: relevantMedicine.id + 2,
+            ilvl: relevantMedicine.ilvl + 2,
+            primaryStat: 'strength' as const,
+            secondaryStat: 'strength' as const,
+        };
+        medicines.push(higherRelevantMedicine, higherIrrelevantMedicine);
+
+        try {
+            const set = new CharacterGearSet(sheet);
+            expect(set.medicineForSim).to.equal(higherRelevantMedicine);
+
+            set.medicine = relevantMedicine;
+            expect(set.medicineForSim).to.equal(relevantMedicine);
+        }
+        finally {
+            medicines.splice(originalLength);
+        }
     });
 
     it('applies selected medicine as a final stat bonus', () => {

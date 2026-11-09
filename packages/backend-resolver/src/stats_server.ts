@@ -1,7 +1,6 @@
 import {ServerBase} from "./server_base";
 import {FastifyInstance, FastifyRequest} from "fastify";
-import 'global-jsdom/register';
-import './polyfills';
+import process from "node:process";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUi from "@fastify/swagger-ui";
 import {ShortlinkService} from "@xivgear/core/external/shortlink_server";
@@ -54,12 +53,21 @@ import {
     ToEmbedSheetResponse,
     ToEmbedSheetSet
 } from "./stats_server_schema_types";
+import {Sema} from "async-sema";
 
 
 export class StatsServer extends ServerBase {
+    private readonly frontendLocation: URL;
 
     constructor(private readonly shortlinkService: ShortlinkService, private readonly navDataService: NavDataService, private readonly bisService: BisService) {
         super();
+        this.frontendLocation = new URL(process.env.FRONTEND_CLIENT || 'https://xivgear.app/');
+        // makeUrl only needs location.search and location.toString(); the stats service has no DOM.
+        this.installFrontendLocation();
+    }
+
+    private installFrontendLocation(): void {
+        globalThis.document = {location: this.frontendLocation} as unknown as Document;
     }
 
     setup(fastifyInstance: FastifyInstance): void {
@@ -468,6 +476,7 @@ export class StatsServer extends ServerBase {
                         return;
                     }
                     const contentStr = JSON.stringify(b);
+                    this.installFrontendLocation();
                     const normalUrl = await this.shortlinkService.putShortLink(contentStr, false);
                     const embedUrl = toEmbedUrl(normalUrl);
                     const out: PutSetResponse = {
@@ -501,6 +510,7 @@ export class StatsServer extends ServerBase {
                         return;
                     }
                     const contentStr = JSON.stringify(b);
+                    this.installFrontendLocation();
                     const baseUrl = await this.shortlinkService.putShortLink(contentStr, false);
                     const setsOut: PutSheetResponse['sets'] = [];
                     const sheet = b as unknown as SheetExport;
@@ -553,36 +563,44 @@ function isValidSheet(b: unknown): b is SheetExport {
     }).sets);
 }
 
+const semaphore = new Sema(4);
+
 async function importExportSheet(request: SheetRequest<ImportExportSheetQuery>, exportedPre: SheetExport | SetExport, nav?: NavPath): Promise<SheetStatsExport> {
-    const exportedInitial: SheetExport | SetExport = exportedPre;
-    const initiallyFullSheet = 'sets' in exportedPre;
-    const onlySetIndex: number | undefined = (nav !== undefined && "onlySetIndex" in nav) ? nav.onlySetIndex : undefined;
-    if (onlySetIndex !== undefined) {
-        if (!initiallyFullSheet) {
-            request.log.warn("onlySetIndex does not make sense when isFullSheet is false");
-        }
-        else {
-            const singleMaybe = extractSingleSet(exportedInitial as SheetExport, onlySetIndex);
-            if (singleMaybe === undefined) {
-                throw new Error(`Error: Set index ${onlySetIndex} is not valid.`);
+    const token = await semaphore.acquire();
+    try {
+        const exportedInitial: SheetExport | SetExport = exportedPre;
+        const initiallyFullSheet = 'sets' in exportedPre;
+        const onlySetIndex: number | undefined = (nav !== undefined && "onlySetIndex" in nav) ? nav.onlySetIndex : undefined;
+        if (onlySetIndex !== undefined) {
+            if (!initiallyFullSheet) {
+                request.log.warn("onlySetIndex does not make sense when isFullSheet is false");
             }
-            exportedPre = singleMaybe;
+            else {
+                const singleMaybe = extractSingleSet(exportedInitial as SheetExport, onlySetIndex);
+                if (singleMaybe === undefined) {
+                    throw new Error(`Error: Set index ${onlySetIndex} is not valid.`);
+                }
+                exportedPre = singleMaybe;
+            }
         }
+        const exported = exportedPre;
+        const isFullSheet = 'sets' in exported;
+        const sheet = isFullSheet ? HEADLESS_SHEET_PROVIDER.fromExport(exported as SheetExport) : HEADLESS_SHEET_PROVIDER.fromSetExport(exported as SetExport);
+        sheet.setSpecificItemsView();
+        const pb = request.query.partyBonus;
+        if (pb) {
+            const parsed = typeof pb === 'number' ? pb : parseFloat(pb);
+            if (!isNaN(parsed) && Number.isInteger(parsed) && parsed >= 0 && parsed <= MAX_PARTY_BONUS) {
+                sheet.partyBonus = parsed as PartyBonusAmount;
+            }
+            else {
+                throw Error(`Party bonus '${pb}' is invalid`);
+            }
+        }
+        await sheet.load();
+        return sheet.exportSheet(ExportTypes.FullStatsExport);
     }
-    const exported = exportedPre;
-    const isFullSheet = 'sets' in exported;
-    const sheet = isFullSheet ? HEADLESS_SHEET_PROVIDER.fromExport(exported as SheetExport) : HEADLESS_SHEET_PROVIDER.fromSetExport(exported as SetExport);
-    sheet.setViewOnly();
-    const pb = request.query.partyBonus;
-    if (pb) {
-        const parsed = typeof pb === 'number' ? pb : parseFloat(pb);
-        if (!isNaN(parsed) && Number.isInteger(parsed) && parsed >= 0 && parsed <= MAX_PARTY_BONUS) {
-            sheet.partyBonus = parsed as PartyBonusAmount;
-        }
-        else {
-            throw Error(`Party bonus '${pb}' is invalid`);
-        }
+    finally {
+        semaphore.release(token);
     }
-    await sheet.load();
-    return sheet.exportSheet(ExportTypes.FullStatsExport);
 }

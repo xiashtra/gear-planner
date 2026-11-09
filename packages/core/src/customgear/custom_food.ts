@@ -1,4 +1,4 @@
-import {CustomFoodExport, FoodBonuses, FoodItem, FoodStatBonus, Substat} from "@xivgear/xivmath/geartypes";
+import {CustomFoodExport, FoodBonuses, FoodItem, FoodStatBonus, ItemQuality, Substat} from "@xivgear/xivmath/geartypes";
 import {CURRENT_MAX_LEVEL, LEVEL_ITEMS} from "@xivgear/xivmath/xivconstants";
 import {xivApiIconUrl} from "../external/xivapi";
 import {toTranslatable, TranslatableString} from "@xivgear/i18n/translation";
@@ -13,7 +13,8 @@ function defaultBonus(): FoodStatBonus {
 export class CustomFood implements FoodItem {
 
     private _data: CustomFoodExport;
-    iconUrl: URL = new URL(xivApiIconUrl(26270));
+    readonly iconUrl: URL = new URL(xivApiIconUrl(26270));
+    readonly quality: ItemQuality = 'none';
 
     private constructor(exportedData: CustomFoodExport) {
         this._data = exportedData;
@@ -71,22 +72,22 @@ export class CustomFood implements FoodItem {
         const out: FoodBonuses = {
             vitality: this._data.vitalityBonus,
         };
-        if (this.secondarySubStat) {
+        if (this.secondaryStat) {
             out[this._data.secondaryStat] = this._data.secondaryStatBonus;
         }
         // Primary is done after so that it will take priority in the event that the user specifies the same
         // stat for both.
-        if (this.primarySubStat) {
+        if (this.primaryStat) {
             out[this._data.primaryStat] = this._data.primaryStatBonus;
         }
         return out;
     }
 
-    get primarySubStat(): Substat | undefined {
+    get primaryStat(): Substat | undefined {
         return this._data.primaryStat;
     }
 
-    get secondarySubStat(): Substat | undefined {
+    get secondaryStat(): Substat | undefined {
         return this._data.secondaryStat;
     }
 
